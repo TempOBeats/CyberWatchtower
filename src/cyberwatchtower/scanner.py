@@ -1,6 +1,10 @@
 from .models import Finding, Severity
 from .system import collect_system_information
-from .firewall import check_firewall
+from .firewall import (
+    check_firewall,
+    inspect_iptables,
+    assess_iptables,
+)
 
 
 def run_scan() -> dict:
@@ -9,48 +13,91 @@ def run_scan() -> dict:
 
     findings = []
 
-    if firewall["status"] == "inactive":
-        findings.append(
-            Finding(
-                title="Firewall appears inactive",
-                description=firewall["message"],
-                severity=Severity.MEDIUM,
-                recommendation="Review the host firewall configuration and enable filtering if appropriate.",
-                evidence=[
-                    f"Firewall technology: {firewall['tool']}",
-                    f"Firewall status: {firewall['status']}",
-                ],
-                confidence=90,
-            )
-        )
+    detected_tools = firewall.get("detected_tools", [])
 
-    elif firewall["status"] == "unknown":
+    if not detected_tools:
         findings.append(
             Finding(
-                title="Firewall protection could not be verified",
-                description=firewall["message"],
+                title="Firewall technology not detected",
+                description=(
+                    "CyberWatchtower could not detect a supported "
+                    "Linux firewall technology."
+                ),
                 severity=Severity.LOW,
-                recommendation="Verify whether another firewall technology protects this system.",
+                recommendation=(
+                    "Verify whether another firewall solution is "
+                    "protecting this system."
+                ),
                 evidence=[
-                    "CyberWatchtower could not identify a supported firewall technology."
+                    "No supported firewall tools were detected."
                 ],
-                confidence=60,
+                confidence=70,
             )
         )
 
-    elif firewall["status"] == "available":
+    else:
         findings.append(
             Finding(
                 title="Firewall technology detected",
-                description=firewall["message"],
+                description=(
+                    "CyberWatchtower detected firewall technology "
+                    "on this system."
+                ),
                 severity=Severity.INFO,
-                recommendation="Inspect the firewall rules to determine whether meaningful filtering is configured.",
+                recommendation=(
+                    "Inspect the active firewall configuration to "
+                    "verify that meaningful filtering is enabled."
+                ),
                 evidence=[
-                    f"Detected technology: {firewall['tool']}",
+                    f"Detected tools: {', '.join(detected_tools)}"
                 ],
                 confidence=95,
             )
         )
+
+    if "iptables" in detected_tools:
+        iptables_data = inspect_iptables()
+
+        if iptables_data.get("accessible"):
+            assessment = assess_iptables(iptables_data)
+
+            findings.append(
+                Finding(
+                    title="iptables firewall assessment",
+                    description=assessment["message"],
+                    severity=Severity[assessment["severity"]],
+                    recommendation=assessment.get(
+                        "recommendation",
+                        "Review the firewall configuration.",
+                    ),
+                    evidence=assessment.get(
+                        "evidence",
+                        [],
+                    ),
+                    confidence=assessment["confidence"],
+                )
+            )
+
+        else:
+            findings.append(
+                Finding(
+                    title="iptables inspection requires elevated privileges",
+                    description=iptables_data.get(
+                        "message",
+                        "CyberWatchtower could not inspect iptables.",
+                    ),
+                    severity=Severity.INFO,
+                    recommendation=(
+                        "Run CyberWatchtower with appropriate privileges "
+                        "if a complete firewall assessment is required."
+                    ),
+                    evidence=[
+                        "iptables detected",
+                        "Firewall rules were not readable by the current user",
+                    ],
+                    confidence=100,
+                )
+            )
 
     return {
         "system": system,
