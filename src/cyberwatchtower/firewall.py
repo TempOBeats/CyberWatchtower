@@ -2,65 +2,129 @@ import shutil
 import subprocess
 
 
-def run_command(command: list[str]) -> str:
+def run_command(command: list[str]) -> dict:
     result = subprocess.run(
         command,
         capture_output=True,
         text=True,
     )
 
-    return result.stdout.strip()
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+    }
 
 
 def check_firewall() -> dict:
-    if shutil.which("ufw"):
-        output = run_command(["ufw", "status"])
+    tools = {
+        "ufw": shutil.which("ufw"),
+        "firewalld": shutil.which("firewall-cmd"),
+        "nftables": shutil.which("nft"),
+        "iptables": shutil.which("iptables"),
+    }
 
-        if "Status: active" in output:
-            return {
-                "status": "active",
-                "tool": "ufw",
-                "message": "UFW firewall is active.",
-            }
+    detected = [
+        name
+        for name, path in tools.items()
+        if path is not None
+    ]
 
+    return {
+        "detected_tools": detected,
+        "tool_paths": tools,
+    }
+
+def inspect_iptables() -> dict:
+    if not shutil.which("iptables"):
         return {
-            "status": "inactive",
-            "tool": "ufw",
-            "message": "UFW is installed but does not appear active.",
+            "available": False,
+            "message": "iptables is not installed.",
         }
 
-    if shutil.which("firewall-cmd"):
-        output = run_command(["firewall-cmd", "--state"])
+    result = run_command(
+        ["iptables", "-L", "-n"]
+    )
 
-        if output == "running":
-            return {
-                "status": "active",
-                "tool": "firewalld",
-                "message": "Firewalld is active.",
-            }
+    output = result["stdout"]
 
+    if result["returncode"] != 0:
         return {
-            "status": "inactive",
-            "tool": "firewalld",
-            "message": "Firewalld is installed but does not appear active.",
+            "available": True,
+            "accessible": False,
+            "message": "iptables exists, but CyberWatchtower could not read the rules.",
+            "error": result["stderr"],
         }
 
-    if shutil.which("nft"):
+    policies = {}
+
+    for line in output.splitlines():
+        if line.startswith("Chain ") and "(policy " in line:
+            parts = line.split()
+
+            chain_name = parts[1]
+            policy = parts[3].replace(")", "")
+
+            policies[chain_name] = policy
+
+    return {
+        "available": True,
+        "accessible": True,
+        "policies": policies,
+        "raw_output": output,
+    }
+
+def assess_iptables(data: dict) -> dict:
+    if not data.get("available"):
         return {
-            "status": "available",
-            "tool": "nftables",
-            "message": "nftables is installed. Rules require further inspection.",
+            "status": "unavailable",
+            "severity": "INFO",
+            "confidence": 100,
+            "message": "iptables is not available on this system.",
         }
 
-    if shutil.which("iptables"):
+    if not data.get("accessible"):
         return {
-            "status": "available",
-            "tool": "iptables",
-            "message": "iptables is installed. Rules require further inspection.",
+            "status": "permission_required",
+            "severity": "INFO",
+            "confidence": 100,
+            "message": "iptables exists, but elevated privileges are required to inspect its rules.",
+        }
+
+    policies = data.get("policies", {})
+
+    input_policy = policies.get("INPUT")
+    forward_policy = policies.get("FORWARD")
+    output_policy = policies.get("OUTPUT")
+
+    if input_policy == "ACCEPT":
+        return {
+            "status": "permissive",
+            "severity": "MEDIUM",
+            "confidence": 90,
+            "message": (
+                "The default INPUT policy is ACCEPT. "
+                "Inbound traffic is permitted by default unless another rule blocks it."
+            ),
+            "evidence": [
+                f"INPUT policy: {input_policy}",
+                f"FORWARD policy: {forward_policy}",
+                f"OUTPUT policy: {output_policy}",
+            ],
+            "recommendation": (
+                "Review the firewall rules and determine whether a more restrictive "
+                "default inbound policy is appropriate for this system."
+            ),
         }
 
     return {
-        "status": "unknown",
-        "tool": None,
-        "message": "No supported Linux firewall technology was detected.",
+        "status": "configured",
+        "severity": "INFO",
+        "confidence": 80,
+        "message": "iptables appears to have a non-ACCEPT default inbound policy.",
+        "evidence": [
+            f"INPUT policy: {input_policy}",
+            f"FORWARD policy: {forward_policy}",
+            f"OUTPUT policy: {output_policy}",
+        ],
     }
