@@ -5,6 +5,11 @@ from .firewall import (
     inspect_iptables,
     assess_iptables,
 )
+from .network import (
+    inspect_listening_services,
+    parse_listening_services,
+    assess_network_exposure,
+)
 
 
 def run_scan() -> dict:
@@ -12,6 +17,27 @@ def run_scan() -> dict:
     firewall = check_firewall()
 
     findings = []
+
+    network = inspect_listening_services()
+
+    if network.get("accessible"):
+        services = parse_listening_services(
+            network.get("raw_output", "")
+        )
+
+        network_findings = assess_network_exposure(services)
+
+        for network_finding in network_findings:
+            findings.append(
+                Finding(
+                    title=network_finding["title"],
+                    description=network_finding["description"],
+                    severity=Severity[network_finding["severity"]],
+                    recommendation=network_finding["recommendation"],
+                    evidence=network_finding["evidence"],
+                    confidence=90,
+                )
+            )
 
     detected_tools = firewall.get("detected_tools", [])
 
