@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import re
 
 
 def _run_command(command: list[str]) -> dict:
@@ -77,6 +78,20 @@ def parse_listening_services(raw_output: str) -> list[dict]:
         state = parts[1]
         local_address = parts[4]
 
+        process_name = "unknown"
+        pid = None
+
+        process_match = re.search(
+            r'users:\(\("([^"]+)",pid=(\d+)',
+            line,
+        )
+
+        if process_match:
+            process_name = process_match.group(1)
+            pid = int(process_match.group(2))
+
+
+
         if ":" in local_address:
             address, port = local_address.rsplit(":", 1)
         else:
@@ -99,6 +114,8 @@ def parse_listening_services(raw_output: str) -> list[dict]:
                 "address": address,
                 "port": port,
                 "exposure": exposure,
+                "process": process_name,
+                "pid": pid,
             }
         )
     return services
@@ -113,6 +130,8 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
         port = service.get("port", "unknown")
         protocol = service.get("protocol", "unknown")
         address = service.get("address", "unknown")
+        process_name = service.get("process", "unknown")
+        pid = service.get("pid")
 
         if exposure == "all_interfaces":
             findings.append(
@@ -127,6 +146,8 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
                         f"Protocol: {protocol}",
                         f"Address: {address}",
                         f"Port: {port}",
+                        f"Process: {process_name}",
+                        f"PID: {pid if pid is not None else 'unknown'}",
                         "Exposure: all interfaces",
                     ],
                     "recommendation": (
