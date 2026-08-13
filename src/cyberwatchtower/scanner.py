@@ -9,6 +9,7 @@ from .network import (
     inspect_listening_services,
     parse_listening_services,
     assess_network_exposure,
+    classify_service_risk,
 )
 
 

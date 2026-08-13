@@ -138,12 +138,17 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
             findings.append(
                 {
                     "severity": risk["severity"],
-                    "title": "Service listening on all interfaces",
+                    "title": (
+                        f"{risk['service_name']} service listening on all interfaces"
+                        if risk["known_service"]
+                        else "Unknown service listening on all interfaces"
+                    ),
                     "description": (
                         f"A {protocol.upper()} service on port {port} "
                         f"is bound to all network interfaces. {risk['reason']}"
                     ),
                     "evidence": [
+                        f"Service: {risk['service_name']}",
                         f"Protocol: {protocol}",
                         f"Address: {address}",
                         f"Port: {port}",
@@ -151,11 +156,7 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
                         f"PID: {pid if pid is not None else 'unknown'}",
                         "Exposure: all interfaces",
                     ],
-                    "recommendation": (
-                        "Verify that this service needs to be reachable "
-                        "from other systems. Restrict its bind address or "
-                        "firewall access if remote access is unnecessary."
-                    ),
+                    "recommendation": risk["recommendation"],
                 }
             )
 

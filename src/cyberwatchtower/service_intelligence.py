@@ -71,6 +71,44 @@ SERVICE_DATABASE = {
     },
 }
 
+ALTERNATE_PORT_DATABASE = {
+    "8000": {
+        "name": "HTTP Development Server",
+        "category": "web",
+        "default_severity": "MEDIUM",
+        "description": (
+            "Port 8000 is commonly used by development web servers."
+        ),
+        "recommendation": (
+            "Verify the development server is intentional and avoid exposing "
+            "it to untrusted networks unless required."
+        ),
+    },
+    "8080": {
+        "name": "Alternate HTTP",
+        "category": "web",
+        "default_severity": "MEDIUM",
+        "description": (
+            "Port 8080 is commonly used for alternate HTTP or development web services."
+        ),
+        "recommendation": (
+            "Verify the web service is expected and restrict network exposure "
+            "if remote access is unnecessary."
+        ),
+    },
+    "8443": {
+        "name": "Alternate HTTPS",
+        "category": "web",
+        "default_severity": "MEDIUM",
+        "description": (
+            "Port 8443 is commonly used for alternate HTTPS services."
+        ),
+        "recommendation": (
+            "Verify the service is expected and maintain secure TLS configuration."
+        ),
+    },
+}
+
 
 def lookup_service(port: str) -> dict:
     """Return service intelligence for a port."""
@@ -78,6 +116,9 @@ def lookup_service(port: str) -> dict:
     port = str(port)
 
     service = SERVICE_DATABASE.get(port)
+
+    if not service:
+        service = ALTERNATE_PORT_DATABASE.get(port)
 
     if service:
         return {
