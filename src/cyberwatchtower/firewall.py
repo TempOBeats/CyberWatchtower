@@ -3,11 +3,21 @@ import subprocess
 
 
 def run_command(command: list[str]) -> dict:
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(exc),
+        }
 
     return {
         "returncode": result.returncode,

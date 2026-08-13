@@ -13,6 +13,7 @@ def finding_to_dict(finding):
         "recommendation": finding.recommendation,
         "evidence": finding.evidence,
         "confidence": finding.confidence,
+        "technique_id": finding.technique_id,
     }
 
     data["finding_id"] = finding.finding_id or finding_identity(data)
