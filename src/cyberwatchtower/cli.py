@@ -84,10 +84,10 @@ def main():
             print("------------")
 
             for finding in comparison["new_findings"]:
-                print(
-                    f"[{finding['severity']}] "
-                    f"{finding['title']}"
-                )
+                print(f"[{finding['severity']}] {finding['title']}")
+                if finding.get("evidence"):
+                    for item in finding["evidence"]:
+                        print(f" - {item}")
 
         if comparison["resolved_findings"]:
             print()
@@ -95,10 +95,7 @@ def main():
             print("-----------------")
 
             for finding in comparison["resolved_findings"]:
-                print(
-                    f"[{finding['severity']}] "
-                    f"{finding['title']}"
-                )
+                print(f"[{finding['severity']}] {finding['title']}")
 
     print()
     print("CyberWatchtower scan complete.")
