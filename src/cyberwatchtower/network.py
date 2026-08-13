@@ -1,7 +1,7 @@
 import shutil
 import subprocess
 import re
-
+from .service_intelligence import lookup_service
 
 def _run_command(command: list[str]) -> dict:
     """Run a local system command safely and capture its output."""
@@ -167,21 +167,32 @@ def classify_service_risk(service: dict) -> dict:
     process = service.get("process", "unknown").lower()
     port = str(service.get("port", "unknown"))
     exposure = service.get("exposure", "local")
+    intelligence = lookup_service(port)
 
     risk = {
-        "severity": "INFO",
-        "reason": "No obvious network exposure risk detected.",
+        "severity": intelligence["default_severity"],
+        "reason": intelligence["description"],
+        "service_name": intelligence["name"],
+        "known_service": intelligence["known"],
+        "recommendation": intelligence["recommendation"],
     }
 
-    if exposure == "all_interfaces":
-        risk["severity"] = "MEDIUM"
-        risk["reason"] = "Service is listening on all network interfaces."
-
-    if process in {"python", "python3", "node", "ruby", "perl"} and exposure == "all_interfaces":
+    if exposure == "all_interfaces" and risk["severity"] == "INFO":
         risk["severity"] = "MEDIUM"
         risk["reason"] = (
-            f"General-purpose runtime '{process}' is listening "
-            "on all network interfaces."
+            f"{intelligence['name']} is listening on all network interfaces. "
+            f"{intelligence['description']}"
+        )
+
+    if (
+        process in {"python", "python3", "node", "ruby", "perl"}
+        and exposure == "all_interfaces"
+        and not intelligence["known"]
+    ):
+        risk["severity"] = "MEDIUM"
+        risk["reason"] = (
+            f"General-purpose runtime '{process}' is listening on all "
+            "network interfaces using an unrecognized port."
         )
 
     return risk
