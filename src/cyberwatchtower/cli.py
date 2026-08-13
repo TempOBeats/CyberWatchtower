@@ -4,7 +4,7 @@ from .scanner import run_scan
 def main():
     print()
     print("================================")
-    print(" CYBERWATCHTOWER")
+    print("        CYBERWATCHTOWER")
     print("================================")
     print()
     print("Initializing security assessment...")
@@ -38,6 +38,21 @@ def main():
 
                 for item in finding.evidence:
                     print(f" - {item}")
+
+    score = results["score"]
+
+    print()
+    print("SECURITY SCORE")
+    print("==============")
+    print(f"Score: {score['score']}/100")
+    print(f"Risk Level: {score['risk_level']}")
+
+    print("FINDINGS:")
+    print(f" - Critical: {score['counts']['CRITICAL']}")
+    print(f" - High: {score['counts']['HIGH']}")
+    print(f" - Medium: {score['counts']['MEDIUM']}")
+    print(f" - Low: {score['counts']['LOW']}")
+    print(f" - Info: {score['counts']['INFO']}")
 
     print()
     print("CyberWatchtower scan complete.")

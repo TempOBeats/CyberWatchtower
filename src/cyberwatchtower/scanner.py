@@ -11,6 +11,7 @@ from .network import (
     assess_network_exposure,
     classify_service_risk,
 )
+from .scoring import calculate_security_score
 
 
 def run_scan() -> dict:
@@ -126,8 +127,11 @@ def run_scan() -> dict:
                 )
             )
 
+    score = calculate_security_score(findings)
+
     return {
         "system": system,
         "firewall": firewall,
         "findings": findings,
+        "score": score,
     }
