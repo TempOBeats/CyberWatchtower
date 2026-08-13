@@ -1,5 +1,5 @@
 from .scanner import run_scan
-
+from .reporting import save_json_report
 
 def main():
     print()
@@ -53,6 +53,13 @@ def main():
     print(f" - Medium: {score['counts']['MEDIUM']}")
     print(f" - Low: {score['counts']['LOW']}")
     print(f" - Info: {score['counts']['INFO']}")
+
+    report_path = save_json_report(results)
+
+    print()
+    print("REPORT")
+    print("======")
+    print(f"Saved to: {report_path}")
 
     print()
     print("CyberWatchtower scan complete.")
