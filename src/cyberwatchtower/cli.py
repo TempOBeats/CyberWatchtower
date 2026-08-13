@@ -1,6 +1,7 @@
 from .scanner import run_scan
 from .reporting import save_json_report
 from .history import load_reports, compare_reports
+from cyberwatchtower.intelligence import analyze_history
 
 def main():
     print()
@@ -96,6 +97,36 @@ def main():
 
             for finding in comparison["resolved_findings"]:
                 print(f"[{finding['severity']}] {finding['title']}")
+
+    reports = load_reports()
+    intelligence = analyze_history(reports)
+
+    print()
+    print("SECURITY INTELLIGENCE")
+    print("=====================")
+    print(f"Historical Scans: {intelligence['total_scans']}")
+    print(f"Average Score: {intelligence['average_score']}/100")
+    print(f"Best Score: {intelligence['best_score']}/100")
+    print(f"Worst Score: {intelligence['worst_score']}/100")
+    print(f"Long-Term Change: {intelligence['overall_change']:+}")
+    print(f"Long-Term Trend: {intelligence['overall_trend']}")
+
+    recurring = [
+        finding
+        for finding in intelligence["findings"]
+        if finding["occurrences"] > 1
+    ]
+
+    if recurring:
+        print()
+        print("RECURRING FINDINGS")
+        print("==================")
+
+        for finding in recurring:
+            print(
+                f"[{finding['severity']}] {finding['title']} "
+                f"({finding['occurrences']} occurrences)"
+            )
 
     print()
     print("CyberWatchtower scan complete.")
