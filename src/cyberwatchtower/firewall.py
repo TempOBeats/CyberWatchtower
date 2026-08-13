@@ -97,6 +97,26 @@ def assess_iptables(data: dict) -> dict:
     forward_policy = policies.get("FORWARD")
     output_policy = policies.get("OUTPUT")
 
+    if input_policy not in {"ACCEPT", "DROP"}:
+        return {
+            "status": "inconclusive",
+            "severity": "INFO",
+            "confidence": 50,
+            "message": (
+                "CyberWatchtower could not determine a recognized default "
+                "INPUT policy from the iptables output."
+            ),
+            "evidence": [
+                f"INPUT policy: {input_policy or 'unknown'}",
+                f"FORWARD policy: {forward_policy or 'unknown'}",
+                f"OUTPUT policy: {output_policy or 'unknown'}",
+            ],
+            "recommendation": (
+                "Review the iptables configuration directly and verify the "
+                "default INPUT policy."
+            ),
+        }
+
     if input_policy == "ACCEPT":
         return {
             "status": "permissive",

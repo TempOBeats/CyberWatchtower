@@ -44,11 +44,13 @@ def inspect_listening_services() -> dict:
 
     result = _run_command([ss_path, "-lntup"])
 
-    if not result["success"]:
+    if not result["success"] or result["stderr"]:
         return {
             "available": True,
             "accessible": False,
-            "message": "CyberWatchtower could not inspect listening services.",
+            "message": (
+                "CyberWatchtower could not completely inspect listening services."
+            ),
             "error": result["stderr"],
             "services": [],
         }

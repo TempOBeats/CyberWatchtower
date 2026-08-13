@@ -41,6 +41,30 @@ def run_scan() -> dict:
                 )
             )
 
+    else:
+        error = network.get("error")
+        evidence = [network.get("message", "Socket inspection was incomplete.")]
+
+        if error:
+            evidence.append(f"Inspection error: {error}")
+
+        findings.append(
+            Finding(
+                title="Listening-service inspection incomplete",
+                description=(
+                    "CyberWatchtower could not complete listening-service "
+                    "inspection, so network exposure may be underreported."
+                ),
+                severity=Severity.LOW,
+                recommendation=(
+                    "Verify that the ss utility is available and that the scan "
+                    "has sufficient permission to inspect local sockets."
+                ),
+                evidence=evidence,
+                confidence=100,
+            )
+        )
+
     detected_tools = firewall.get("detected_tools", [])
 
     if not detected_tools:
