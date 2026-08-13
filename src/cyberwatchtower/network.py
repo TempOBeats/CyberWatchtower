@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import re
 from .service_intelligence import lookup_service
+from .process_intelligence import inspect_process_application
 
 def _run_command(command: list[str]) -> dict:
     """Run a local system command safely and capture its output."""
@@ -122,6 +123,33 @@ def parse_listening_services(raw_output: str) -> list[dict]:
         )
     return services
 
+
+def enrich_process_intelligence(
+    services: list[dict], proc_root="/proc"
+) -> list[dict]:
+    """Add safe interpreter application metadata to service records."""
+
+    enriched_services = []
+
+    for service in services:
+        enriched_service = dict(service)
+        process_data = inspect_process_application(
+            service.get("pid"),
+            service.get("process", "unknown"),
+            proc_root,
+        )
+
+        if process_data["application"]:
+            enriched_service["application"] = process_data["application"]
+            enriched_service["application_name"] = process_data["application_name"]
+            enriched_service["known_application"] = process_data[
+                "known_application"
+            ]
+
+        enriched_services.append(enriched_service)
+
+    return enriched_services
+
 def assess_network_exposure(services: list[dict]) -> list[dict]:
     """Assess listening services for potentially risky exposure."""
 
@@ -134,6 +162,8 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
         address = service.get("address", "unknown")
         process_name = service.get("process", "unknown")
         pid = service.get("pid")
+        application = service.get("application")
+        application_name = service.get("application_name")
         risk = classify_service_risk(service)
 
         if exposure == "all_interfaces":
@@ -156,6 +186,14 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
                         f"Port: {port}",
                         f"Process: {process_name}",
                         f"PID: {pid if pid is not None else 'unknown'}",
+                        *(
+                            [
+                                f"Application: {application}",
+                                f"Service/Application: {application_name}",
+                            ]
+                            if application
+                            else []
+                        ),
                         "Exposure: all interfaces",
                     ],
                     "recommendation": risk["recommendation"],
@@ -171,6 +209,8 @@ def classify_service_risk(service: dict) -> dict:
     port = str(service.get("port", "unknown"))
     exposure = service.get("exposure", "local")
     intelligence = lookup_service(port)
+    application_name = service.get("application_name")
+    known_application = service.get("known_application", False)
 
     risk = {
         "severity": intelligence["default_severity"],
@@ -180,17 +220,32 @@ def classify_service_risk(service: dict) -> dict:
         "recommendation": intelligence["recommendation"],
     }
 
+    if not intelligence["known"] and known_application and application_name:
+        risk.update(
+            {
+                "service_name": application_name,
+                "known_service": True,
+                "reason": (
+                    f"Process metadata identifies this service as {application_name}."
+                ),
+                "recommendation": (
+                    f"Verify that {application_name} is expected and restrict its "
+                    "network exposure when remote access is unnecessary."
+                ),
+            }
+        )
+
     if exposure == "all_interfaces" and risk["severity"] == "INFO":
         risk["severity"] = "MEDIUM"
         risk["reason"] = (
-            f"{intelligence['name']} is listening on all network interfaces. "
-            f"{intelligence['description']}"
+            f"{risk['service_name']} is listening on all network interfaces. "
+            f"{risk['reason']}"
         )
 
     if (
         process in {"python", "python3", "node", "ruby", "perl"}
         and exposure == "all_interfaces"
-        and not intelligence["known"]
+        and not risk["known_service"]
     ):
         risk["severity"] = "MEDIUM"
         risk["reason"] = (

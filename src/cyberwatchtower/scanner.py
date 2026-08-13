@@ -8,6 +8,7 @@ from .firewall import (
 from .network import (
     inspect_listening_services,
     parse_listening_services,
+    enrich_process_intelligence,
     assess_network_exposure,
     classify_service_risk,
 )
@@ -26,6 +27,7 @@ def run_scan() -> dict:
         services = parse_listening_services(
             network.get("raw_output", "")
         )
+        services = enrich_process_intelligence(services)
 
         network_findings = assess_network_exposure(services)
 
