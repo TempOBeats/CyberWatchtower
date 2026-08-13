@@ -132,15 +132,16 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
         address = service.get("address", "unknown")
         process_name = service.get("process", "unknown")
         pid = service.get("pid")
+        risk = classify_service_risk(service)
 
         if exposure == "all_interfaces":
             findings.append(
                 {
-                    "severity": "MEDIUM",
+                    "severity": risk["severity"],
                     "title": "Service listening on all interfaces",
                     "description": (
                         f"A {protocol.upper()} service on port {port} "
-                        "is bound to all network interfaces."
+                        f"is bound to all network interfaces. {risk['reason']}"
                     ),
                     "evidence": [
                         f"Protocol: {protocol}",
@@ -159,3 +160,28 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
             )
 
     return findings
+
+def classify_service_risk(service: dict) -> dict:
+    """Classify the potential risk of a listening network service."""
+
+    process = service.get("process", "unknown").lower()
+    port = str(service.get("port", "unknown"))
+    exposure = service.get("exposure", "local")
+
+    risk = {
+        "severity": "INFO",
+        "reason": "No obvious network exposure risk detected.",
+    }
+
+    if exposure == "all_interfaces":
+        risk["severity"] = "MEDIUM"
+        risk["reason"] = "Service is listening on all network interfaces."
+
+    if process in {"python", "python3", "node", "ruby", "perl"} and exposure == "all_interfaces":
+        risk["severity"] = "MEDIUM"
+        risk["reason"] = (
+            f"General-purpose runtime '{process}' is listening "
+            "on all network interfaces."
+        )
+
+    return risk
