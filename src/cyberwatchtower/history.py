@@ -1,8 +1,29 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+from .finding_identity import finding_identity
 
-def load_reports(report_directory="reports") -> list[dict]:
+
+def _report_timestamp(report: dict, report_path: Path) -> float:
+    generated_at = report.get("generated_at")
+
+    if isinstance(generated_at, str):
+        try:
+            timestamp = datetime.fromisoformat(generated_at)
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            return timestamp.timestamp()
+        except ValueError:
+            pass
+
+    try:
+        return report_path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def load_reports(report_directory="reports", hostname: str | None = None) -> list[dict]:
     """Load saved CyberWatchtower JSON reports in chronological order."""
 
     report_dir = Path(report_directory)
@@ -10,20 +31,28 @@ def load_reports(report_directory="reports") -> list[dict]:
     if not report_dir.exists():
         return []
 
-    reports = []
+    reports_with_timestamps = []
 
     for report_path in sorted(report_dir.glob("*.json")):
         try:
             with report_path.open("r", encoding="utf-8") as file:
                 data = json.load(file)
 
+            if hostname is not None:
+                report_hostname = data.get("system", {}).get("hostname")
+                if report_hostname != hostname:
+                    continue
+
             data["_report_path"] = str(report_path)
-            reports.append(data)
+            reports_with_timestamps.append(
+                (_report_timestamp(data, report_path), str(report_path), data)
+            )
 
         except (OSError, json.JSONDecodeError):
             continue
 
-    return reports
+    reports_with_timestamps.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in reports_with_timestamps]
 
 def compare_reports(previous: dict, current: dict) -> dict:
     """Compare two CyberWatchtower reports."""
@@ -44,26 +73,26 @@ def compare_reports(previous: dict, current: dict) -> dict:
         trend = "UNCHANGED"
 
     previous_findings = {
-        finding.get("title", "Unknown finding"): finding
+        finding_identity(finding): finding
         for finding in previous.get("findings", [])
     }
 
     current_findings = {
-        finding.get("title", "Unknown finding"): finding
+        finding_identity(finding): finding
         for finding in current.get("findings", [])
     }
 
-    new_titles = set(current_findings) - set(previous_findings)
-    resolved_titles = set(previous_findings) - set(current_findings)
+    new_identities = set(current_findings) - set(previous_findings)
+    resolved_identities = set(previous_findings) - set(current_findings)
 
     new_findings = [
-        current_findings[title]
-        for title in sorted(new_titles)
+        current_findings[identity]
+        for identity in sorted(new_identities)
     ]
 
     resolved_findings = [
-        previous_findings[title]
-        for title in sorted(resolved_titles)
+        previous_findings[identity]
+        for identity in sorted(resolved_identities)
     ]
 
     return {

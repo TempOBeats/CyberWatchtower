@@ -18,3 +18,4 @@ class Finding:
     evidence: List[str] = field(default_factory=list)
     confidence: int = 0
     technique_id: str | None = None
+    finding_id: str | None = None

@@ -58,7 +58,7 @@ def main():
 
     report_path = save_json_report(results)
 
-    reports = load_reports()
+    reports = load_reports(hostname=results["system"].get("hostname"))
 
     comparison = None
 
@@ -98,7 +98,6 @@ def main():
             for finding in comparison["resolved_findings"]:
                 print(f"[{finding['severity']}] {finding['title']}")
 
-    reports = load_reports()
     intelligence = analyze_history(reports)
 
     print()

@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+from .finding_identity import finding_identity
+
 
 def analyze_history(reports):
     """
@@ -40,10 +42,12 @@ def analyze_history(reports):
 
         for finding in report.get("findings", []):
             title = finding.get("title", "Unknown finding")
+            identity = finding_identity(finding)
 
-            record = finding_history[title]
+            record = finding_history[identity]
 
             record["title"] = title
+            record["finding_id"] = identity
             record["severity"] = finding.get("severity", "UNKNOWN")
 
             if record["first_seen"] is None:
