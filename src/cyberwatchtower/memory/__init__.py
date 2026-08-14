@@ -10,6 +10,7 @@ from .ingestion_models import (
 from .models import CURRENT_MEMORY_SCHEMA_VERSION
 from .lifecycle import rebuild_system_lifecycle
 from .provenance import MemoryProvenance, provenance_epistemic_role
+from .service import SecurityMemory, SQLiteSecurityMemory
 
 __all__ = [
     "CURRENT_MEMORY_SCHEMA_VERSION",
@@ -22,4 +23,6 @@ __all__ = [
     "open_memory_database",
     "rebuild_system_lifecycle",
     "provenance_epistemic_role",
+    "SecurityMemory",
+    "SQLiteSecurityMemory",
 ]
