@@ -249,8 +249,9 @@ def _write_finding(
         """INSERT INTO finding_occurrences
            (occurrence_id, finding_pk, report_id, system_id, observed_at, title,
             description, severity, recommendation, confidence, technique_id,
-            source, kind, assessment_state, metadata_inferred, evidence_json, provenance)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            source, kind, assessment_state, metadata_inferred, evidence_json, provenance,
+            stable_finding_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             occurrence_id,
             finding_pk,
@@ -269,6 +270,7 @@ def _write_finding(
             int(finding.metadata_inferred),
             json.dumps(finding.evidence, ensure_ascii=False),
             MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
+            finding.finding_id,
         ),
     )
 

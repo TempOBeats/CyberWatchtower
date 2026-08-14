@@ -31,6 +31,7 @@ REQUIRED_INDEXES = frozenset({
     "idx_score_history_system_observed",
     "idx_findings_system_active_recurring",
     "idx_occurrences_finding_observed",
+    "idx_occurrences_system_finding_observed",
     "idx_lifecycle_finding_occurred",
 })
 
@@ -102,6 +103,14 @@ def validate_memory_database(connection: sqlite3.Connection) -> None:
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise MemoryIntegrityError("Memory schema contains foreign-key violations.")
+        missing_occurrence_ids = connection.execute(
+            """SELECT COUNT(*) FROM finding_occurrences
+               WHERE stable_finding_id IS NULL OR length(stable_finding_id) = 0"""
+        ).fetchone()[0]
+        if missing_occurrence_ids:
+            raise MemoryIntegrityError(
+                "Memory schema contains occurrences without immutable finding identities."
+            )
         quick_check = connection.execute("PRAGMA quick_check").fetchone()[0]
         if quick_check != "ok":
             raise MemoryIntegrityError("SQLite quick_check did not return ok.")
