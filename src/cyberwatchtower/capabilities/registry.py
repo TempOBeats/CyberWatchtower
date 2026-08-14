@@ -46,8 +46,18 @@ class ApprovalRequired(RuntimeError):
 
 
 class CapabilityRegistry:
-    def __init__(self) -> None:
+    def __init__(self, definitions=()) -> None:
         self._definitions: dict[str, CapabilityDefinition] = {}
+        for definition in definitions:
+            self.register(definition)
+
+    def with_overrides(self, *definitions: CapabilityDefinition):
+        """Return a copied registry with explicit definition replacements."""
+
+        copied = CapabilityRegistry(self._definitions.values())
+        for definition in definitions:
+            copied._definitions[definition.capability_id] = definition
+        return copied
 
     def register(self, definition: CapabilityDefinition) -> None:
         if definition.capability_id in self._definitions:

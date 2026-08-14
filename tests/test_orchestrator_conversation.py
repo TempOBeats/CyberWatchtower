@@ -107,11 +107,11 @@ class OrchestratorConversationTests(unittest.TestCase):
 
     def test_orchestrator_cannot_manufacture_capability_approval(self):
         registry = build_read_only_registry()
-        registry._definitions["load_reports"] = CapabilityDefinition(
+        registry = registry.with_overrides(CapabilityDefinition(
             "load_reports",
             PermissionClass.USER_APPROVAL_REQUIRED,
             lambda request, context: (),
-        )
+        ))
         with self.assertRaises(PermissionError):
             IntelligenceOrchestrator(registry=registry).handle(
                 "Give me my security briefing", reports=_reports()
