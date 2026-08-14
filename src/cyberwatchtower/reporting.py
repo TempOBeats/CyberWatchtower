@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .finding_identity import finding_identity
+from .report_contracts import CURRENT_REPORT_SCHEMA_VERSION, normalize_coverage
 
 
 def finding_to_dict(finding):
@@ -42,8 +43,10 @@ def save_json_report(results, report_directory="reports"):
     )
 
     report = {
+        "schema_version": CURRENT_REPORT_SCHEMA_VERSION,
         "generated_at": now.isoformat(),
         "system": results["system"],
+        "coverage": normalize_coverage(results.get("coverage")),
         "security_score": results["score"],
         "findings": [
             finding_to_dict(finding)

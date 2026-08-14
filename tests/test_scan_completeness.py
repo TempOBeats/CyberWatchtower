@@ -4,6 +4,7 @@ from unittest.mock import patch
 from cyberwatchtower.firewall import assess_iptables
 from cyberwatchtower.network import inspect_listening_services
 from cyberwatchtower.scanner import run_scan
+from cyberwatchtower.report_contracts import CoverageState, ScanDomain
 
 
 class SocketInspectionTests(unittest.TestCase):
@@ -50,6 +51,10 @@ class SocketInspectionTests(unittest.TestCase):
             result = run_scan()
 
         self.assertLess(result["score"]["score"], 100)
+        self.assertEqual(
+            result["coverage"][ScanDomain.NETWORK_SOCKET_INSPECTION.value],
+            CoverageState.INCOMPLETE.value,
+        )
         self.assertTrue(
             any(
                 finding.title == "Listening-service inspection incomplete"
@@ -70,6 +75,36 @@ class FirewallAssessmentTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "inconclusive")
         self.assertEqual(result["severity"], "INFO")
+
+    def test_complete_network_and_iptables_checks_have_explicit_coverage(self):
+        with (
+            patch("cyberwatchtower.scanner.collect_system_information", return_value={}),
+            patch(
+                "cyberwatchtower.scanner.check_firewall",
+                return_value={"detected_tools": ["iptables"]},
+            ),
+            patch(
+                "cyberwatchtower.scanner.inspect_listening_services",
+                return_value={"accessible": True, "raw_output": ""},
+            ),
+            patch("cyberwatchtower.scanner.parse_listening_services", return_value=[]),
+            patch("cyberwatchtower.scanner.enrich_process_intelligence", return_value=[]),
+            patch("cyberwatchtower.scanner.inspect_iptables", return_value={
+                "available": True,
+                "accessible": True,
+                "policies": {"INPUT": "DROP"},
+            }),
+        ):
+            result = run_scan()
+
+        self.assertEqual(
+            result["coverage"][ScanDomain.NETWORK_SOCKET_INSPECTION.value],
+            CoverageState.COMPLETE.value,
+        )
+        self.assertEqual(
+            result["coverage"][ScanDomain.IPTABLES_INPUT_POLICY.value],
+            CoverageState.COMPLETE.value,
+        )
 
 
 if __name__ == "__main__":

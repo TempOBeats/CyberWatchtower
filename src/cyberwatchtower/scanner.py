@@ -13,6 +13,7 @@ from .network import (
     classify_service_risk,
 )
 from .scoring import calculate_security_score
+from .report_contracts import CoverageState, ScanDomain
 
 
 def run_scan() -> dict:
@@ -20,10 +21,16 @@ def run_scan() -> dict:
     firewall = check_firewall()
 
     findings = []
+    coverage = {
+        ScanDomain.FIREWALL_TECHNOLOGY.value: CoverageState.COMPLETE.value,
+        ScanDomain.IPTABLES_INPUT_POLICY.value: CoverageState.UNKNOWN.value,
+        ScanDomain.NETWORK_SOCKET_INSPECTION.value: CoverageState.UNKNOWN.value,
+    }
 
     network = inspect_listening_services()
 
     if network.get("accessible"):
+        coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = CoverageState.COMPLETE.value
         services = parse_listening_services(
             network.get("raw_output", "")
         )
@@ -47,6 +54,7 @@ def run_scan() -> dict:
             )
 
     else:
+        coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = CoverageState.INCOMPLETE.value
         error = network.get("error")
         evidence = [network.get("message", "Socket inspection was incomplete.")]
 
@@ -127,6 +135,12 @@ def run_scan() -> dict:
         if iptables_data.get("accessible"):
             assessment = assess_iptables(iptables_data)
 
+            coverage[ScanDomain.IPTABLES_INPUT_POLICY.value] = (
+                CoverageState.COMPLETE.value
+                if assessment["status"] in {"permissive", "configured"}
+                else CoverageState.INCOMPLETE.value
+            )
+
             if assessment["status"] == "permissive":
                 finding_kind = FindingKind.RISK
                 assessment_state = AssessmentState.CONFIRMED
@@ -158,6 +172,7 @@ def run_scan() -> dict:
             )
 
         else:
+            coverage[ScanDomain.IPTABLES_INPUT_POLICY.value] = CoverageState.INCOMPLETE.value
             findings.append(
                 Finding(
                     title="iptables inspection requires elevated privileges",
@@ -186,6 +201,7 @@ def run_scan() -> dict:
     return {
         "system": system,
         "firewall": firewall,
+        "coverage": coverage,
         "findings": findings,
         "score": score,
     }
