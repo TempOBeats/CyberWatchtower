@@ -330,6 +330,8 @@ class DecisionMigrationTests(unittest.TestCase):
                     migration.sql, encoding="utf-8")
             Path(migration_dir, "0004_broken.sql").write_text(
                 "CREATE TABLE partial_m4(value TEXT);\nTHIS IS NOT SQL;\n", encoding="utf-8")
+            Path(migration_dir, "0005_placeholder.sql").write_text(
+                "CREATE TABLE never_reached_m5(value TEXT);\n", encoding="utf-8")
             path = Path(directory, "memory.db")
             with self.assertRaises(MemoryMigrationFailed):
                 open_memory_database(path, migration_directory=migration_dir)
