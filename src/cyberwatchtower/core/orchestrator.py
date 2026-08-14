@@ -22,6 +22,7 @@ from cyberwatchtower.core.evidence import (
     EvidenceSource,
     GroundedResponse,
     ResponseSection,
+    make_evidence_ref,
 )
 from cyberwatchtower.core.grounding import require_grounded
 from cyberwatchtower.intelligence import analyze_history
@@ -30,6 +31,11 @@ from cyberwatchtower.model_gateway.deterministic import DeterministicGateway, Ga
 from cyberwatchtower.memory.context import build_memory_context, persisted_finding_candidates
 from cyberwatchtower.memory.service import SecurityMemory
 from cyberwatchtower.memory.investigation_models import ReferenceState, ReferenceType
+from cyberwatchtower.report_contracts import (
+    LegacyIdentityResolution,
+    canonical_report_digest,
+    legacy_resolution_authorizes,
+)
 
 
 class OrchestratorState(str, Enum):
@@ -51,6 +57,27 @@ class OrchestratorResult:
     plan: CapabilityPlan
     response: GroundedResponse
     briefing: SecurityBriefing | None = None
+
+
+def _legacy_report_matches(
+    report: Mapping,
+    system_id: str,
+    hostname: str | None,
+    resolutions: Mapping[str, LegacyIdentityResolution],
+) -> bool:
+    report_system = report.get("system", {})
+    if report_system.get("system_id") is not None:
+        return False
+    try:
+        resolution = resolutions.get(canonical_report_digest(report))
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        report_system.get("hostname") == hostname
+        and legacy_resolution_authorizes(
+            resolution, system_id=system_id, hostname=hostname
+        )
+    )
 
 
 class IntelligenceOrchestrator:
@@ -83,20 +110,27 @@ class IntelligenceOrchestrator:
                 )
 
     @staticmethod
-    def _isolate_latest_system(reports: Sequence[dict]) -> list[dict]:
+    def _isolate_latest_system(
+        reports: Sequence[dict],
+        legacy_resolutions: Mapping[str, LegacyIdentityResolution] | None = None,
+    ) -> list[dict]:
         if not reports:
             return []
-        latest_system = reports[-1].get("system", {})
+        native_reports = [
+            report for report in reports
+            if report.get("system", {}).get("system_id")
+        ]
+        latest_system = (native_reports[-1] if native_reports else reports[-1]).get(
+            "system", {}
+        )
         system_id = latest_system.get("system_id")
         hostname = latest_system.get("hostname")
         if system_id:
             return [
                 report for report in reports
                 if report.get("system", {}).get("system_id") == system_id
-                or (
-                    report.get("system", {}).get("system_id") is None
-                    and hostname
-                    and report.get("system", {}).get("hostname") == hostname
+                or _legacy_report_matches(
+                    report, system_id, hostname, legacy_resolutions or {}
                 )
             ]
         if hostname:
@@ -114,6 +148,7 @@ class IntelligenceOrchestrator:
         reports: Sequence[dict] = (),
         report_directory: str = "reports",
         explicit_finding_id: str | None = None,
+        legacy_resolutions: Mapping[str, LegacyIdentityResolution] | None = None,
     ) -> OrchestratorResult:
         session = session or ConversationSession()
         states = [OrchestratorState.RECEIVED]
@@ -124,7 +159,9 @@ class IntelligenceOrchestrator:
         intent = selection.intent
         states.append(OrchestratorState.INTENT_CLASSIFIED)
 
-        loaded_reports = self._isolate_latest_system(list(reports))
+        loaded_reports = self._isolate_latest_system(
+            list(reports), legacy_resolutions
+        )
         preliminary = None
         if loaded_reports:
             preliminary = build_security_briefing(
@@ -155,7 +192,9 @@ class IntelligenceOrchestrator:
         )
         if not loaded_reports:
             loaded_reports = list(self.registry.execute(plan.requests[0], capability_context))
-            loaded_reports = self._isolate_latest_system(loaded_reports)
+            loaded_reports = self._isolate_latest_system(
+                loaded_reports, legacy_resolutions
+            )
             system_id = loaded_reports[-1].get("system", {}).get("system_id") if loaded_reports else None
             capability_context = CapabilityContext(
                 report_directory, tuple(loaded_reports), self.memory, system_id
@@ -268,9 +307,8 @@ class IntelligenceOrchestrator:
     @staticmethod
     def _question_response(intent, text, finding_ids, action_ids):
         source_id = finding_ids[0] if finding_ids else (action_ids[0] if action_ids else intent)
-        source = EvidenceSource.DETERMINISTIC_FINDING if finding_ids else EvidenceSource.DETERMINISTIC_ADVISOR
-        evidence = EvidenceRef(
-            "answer:evidence", source, source_id,
+        evidence = make_evidence_ref(
+            "answer:evidence", EvidenceSource.DETERMINISTIC_ADVISOR, source_id,
             EpistemicRole.DETERMINISTIC_DERIVATION,
             "Deterministic Advisor answer",
         )
@@ -286,7 +324,7 @@ class IntelligenceOrchestrator:
 
     @staticmethod
     def _notice(intent: str, text: str) -> GroundedResponse:
-        evidence = EvidenceRef(
+        evidence = make_evidence_ref(
             "system:capability", EvidenceSource.DETERMINISTIC_ADVISOR,
             "supported_capabilities", EpistemicRole.DETERMINISTIC_DERIVATION,
             "Deterministic capability state",

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from .evidence import EpistemicRole, GroundedResponse
+from .evidence import EpistemicRole, GroundedResponse, SOURCE_ROLE_COMPATIBILITY
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,16 @@ def validate_grounding(response: GroundedResponse) -> GroundingResult:
 
     evidence = {item.evidence_id: item for item in response.evidence}
     issues = []
+    if len(evidence) != len(response.evidence):
+        issues.append(GroundingIssue("response:evidence", "Evidence IDs are not unique."))
+    for item in response.evidence:
+        if item.epistemic_role not in SOURCE_ROLE_COMPATIBILITY.get(
+            item.source, frozenset()
+        ):
+            issues.append(GroundingIssue(
+                item.evidence_id,
+                "Evidence source is incompatible with its epistemic role.",
+            ))
     for section in response.sections:
         for claim in section.claims:
             if not claim.evidence_ids:
@@ -46,7 +56,7 @@ def validate_grounding(response: GroundedResponse) -> GroundingResult:
                 continue
             allowed = _PERMITTED_SUPPORT[claim.epistemic_role]
             roles = {evidence[item].epistemic_role for item in claim.evidence_ids}
-            if not roles.intersection(allowed):
+            if not roles or not roles.issubset(allowed):
                 issues.append(
                     GroundingIssue(
                         claim.claim_id,

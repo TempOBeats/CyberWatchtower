@@ -11,6 +11,7 @@ from cyberwatchtower.core.evidence import (
     EvidenceSource,
     GroundedResponse,
     ResponseSection,
+    make_evidence_ref,
 )
 from cyberwatchtower.core.grounding import require_grounded
 from cyberwatchtower.memory.context import MemoryContext
@@ -43,21 +44,21 @@ def build_security_briefing(
     context = build_advisor_context(current_report, comparison, intelligence)
     advisory = generate_advisory(context)
     evidence = [
-        EvidenceRef(
+        make_evidence_ref(
             "advisor:posture",
             EvidenceSource.DETERMINISTIC_ADVISOR,
             "posture_summary",
             EpistemicRole.DETERMINISTIC_DERIVATION,
             "Deterministic score and assessment summary",
         ),
-        EvidenceRef(
+        make_evidence_ref(
             "advisor:changes",
             EvidenceSource.DETERMINISTIC_ADVISOR,
             "changes_summary",
             EpistemicRole.DETERMINISTIC_DERIVATION,
             "Deterministic report comparison",
         ),
-        EvidenceRef(
+        make_evidence_ref(
             "advisor:recurring",
             EvidenceSource.DETERMINISTIC_ADVISOR,
             "recurring_summary",
@@ -70,11 +71,11 @@ def build_security_briefing(
     for finding_id in advisory.important_finding_ids:
         finding = findings_by_id[finding_id]
         evidence_id = f"finding:{finding_id}"
-        evidence.append(EvidenceRef(
+        evidence.append(make_evidence_ref(
             evidence_id,
             EvidenceSource.DETERMINISTIC_FINDING,
             finding_id,
-            EpistemicRole.DETERMINISTIC_DERIVATION,
+            EpistemicRole.OBSERVED_FACT,
             finding.title,
         ))
         uncertainty = (
@@ -90,7 +91,7 @@ def build_security_briefing(
     action_claims = []
     for action in advisory.actions[:3]:
         evidence_id = f"action:{action.action_id}"
-        evidence.append(EvidenceRef(
+        evidence.append(make_evidence_ref(
             evidence_id,
             EvidenceSource.DETERMINISTIC_ADVISOR,
             action.action_id,
