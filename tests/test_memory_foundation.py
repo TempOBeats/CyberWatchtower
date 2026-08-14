@@ -13,6 +13,7 @@ from cyberwatchtower.memory.errors import (
     MemoryMigrationFailed,
 )
 from cyberwatchtower.memory.models import CURRENT_MEMORY_SCHEMA_VERSION
+from cyberwatchtower.memory.migrations import discover_migrations
 from cyberwatchtower.memory.provenance import MemoryProvenance, provenance_epistemic_role
 
 
@@ -32,6 +33,45 @@ class ProvenanceTests(unittest.TestCase):
 
 
 class MemoryDatabaseTests(unittest.TestCase):
+    def test_existing_schema_one_database_migrates_forward_without_reset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "memory.sqlite3")
+            first_migration = discover_migrations()[0]
+            connection = sqlite3.connect(path)
+            connection.executescript(first_migration.sql)
+            connection.execute(
+                """CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    applied_at TEXT NOT NULL,
+                    application_version TEXT NOT NULL
+                )"""
+            )
+            connection.execute(
+                "INSERT INTO schema_migrations VALUES (1, ?, ?, 'then', 'memory-v0.2')",
+                (first_migration.name, first_migration.checksum),
+            )
+            connection.execute("INSERT INTO systems VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (
+                "cwt-preserved", "host", "then", "then", 1, "STABLE",
+                "DETERMINISTIC_OBSERVATION", "then", "then",
+            ))
+            connection.execute("PRAGMA user_version = 1")
+            connection.commit()
+            connection.close()
+
+            with open_memory_database(path) as database:
+                version = database.connection.execute("PRAGMA user_version").fetchone()[0]
+                system = database.connection.execute(
+                    "SELECT system_id FROM systems"
+                ).fetchone()[0]
+                columns = {
+                    row[1] for row in database.connection.execute("PRAGMA table_info(reports)")
+                }
+        self.assertEqual(version, CURRENT_MEMORY_SCHEMA_VERSION)
+        self.assertEqual(system, "cwt-preserved")
+        self.assertIn("coverage_json", columns)
+
     def test_fresh_database_migrates_and_reopen_is_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "private", "memory.sqlite3")
@@ -40,8 +80,8 @@ class MemoryDatabaseTests(unittest.TestCase):
             with open_memory_database(path) as second:
                 second_count = second.info.migration_count
                 version = second.connection.execute("PRAGMA user_version").fetchone()[0]
-        self.assertEqual(first_count, 1)
-        self.assertEqual(second_count, 1)
+        self.assertEqual(first_count, CURRENT_MEMORY_SCHEMA_VERSION)
+        self.assertEqual(second_count, CURRENT_MEMORY_SCHEMA_VERSION)
         self.assertEqual(version, CURRENT_MEMORY_SCHEMA_VERSION)
 
     def test_checksum_mismatch_is_detected_without_reset(self):
@@ -94,7 +134,7 @@ class MemoryDatabaseTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM schema_migrations"
             ).fetchone()[0]
             connection.close()
-        self.assertEqual(migration_count, 1)
+        self.assertEqual(migration_count, CURRENT_MEMORY_SCHEMA_VERSION)
 
     def test_corrupt_database_is_classified_and_not_recreated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -112,6 +152,10 @@ class MemoryDatabaseTests(unittest.TestCase):
             migration_dir.mkdir()
             Path(migration_dir, "0001_broken.sql").write_text(
                 "CREATE TABLE partial (value TEXT);\nTHIS IS NOT SQL;\n",
+                encoding="utf-8",
+            )
+            Path(migration_dir, "0002_placeholder.sql").write_text(
+                "CREATE TABLE never_reached (value TEXT);\n",
                 encoding="utf-8",
             )
             path = Path(directory, "memory.sqlite3")
@@ -148,10 +192,14 @@ class MemoryDatabaseTests(unittest.TestCase):
                 self.assertTrue(REQUIRED_INDEXES.issubset(objects))
                 with self.assertRaises(sqlite3.IntegrityError):
                     connection.execute(
-                        """INSERT INTO reports VALUES
-                           ('report', 'missing-system', 'now', 'now', '1.1', 'digest',
-                            NULL, NULL, 'DETERMINISTIC_OBSERVATION',
-                            'NATIVE_SYSTEM_ID', 'COMPLETE')"""
+                        """INSERT INTO reports
+                           (report_id, system_id, generated_at, ingested_at,
+                            report_schema_version, content_digest, source_path,
+                            source_filename, provenance, legacy_identity_state,
+                            ingestion_status)
+                           VALUES ('report', 'missing-system', 'now', 'now', '1.1',
+                                   'digest', NULL, NULL, 'DETERMINISTIC_OBSERVATION',
+                                   'NATIVE_SYSTEM_ID', 'COMPLETE')"""
                     )
 
     @unittest.skipUnless(os.name == "posix", "POSIX permission bits required")
