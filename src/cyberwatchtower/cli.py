@@ -3,6 +3,32 @@ from .reporting import save_json_report
 from .history import load_reports, compare_reports
 from cyberwatchtower.intelligence import analyze_history
 
+
+def _display_advisor(current_report, comparison, intelligence):
+    """Display advisory output without affecting the deterministic scan path."""
+
+    try:
+        from .advisor.context import build_advisor_context
+        from .advisor.rendering import render_advisory
+        from .advisor.service import generate_advisory
+
+        context = build_advisor_context(
+            current_report,
+            comparison,
+            intelligence,
+        )
+        advisory = generate_advisory(context)
+        print()
+        print(render_advisory(advisory, context))
+    except Exception:
+        print()
+        print("AI ADVISOR")
+        print("==========")
+        print(
+            "Advisor unavailable; the deterministic scan and report remain complete."
+        )
+
+
 def main():
     print()
     print("================================")
@@ -126,6 +152,8 @@ def main():
                 f"[{finding['severity']}] {finding['title']} "
                 f"({finding['occurrences']} occurrences)"
             )
+
+    _display_advisor(reports[-1], comparison, intelligence)
 
     print()
     print("CyberWatchtower scan complete.")

@@ -17,6 +17,12 @@ assess.
 - Severity-based findings and a 0–100 security score
 - Timestamped JSON reports
 - Per-host scan comparison and long-term finding intelligence
+- Deterministic security posture advice, remediation priorities, and next steps
+
+The AI Advisor v0.1 advisory layer remains grounded in deterministic scan
+findings. Its default mode requires no AI provider or network API. Optional
+future providers are limited to selecting and ordering known finding and action
+identifiers; final explanations and recommendations remain deterministic.
 
 ## Requirements
 
