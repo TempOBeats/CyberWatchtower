@@ -32,3 +32,7 @@ class MemoryIntegrityError(MemoryErrorBase):
 
 class MemoryLifecycleError(MemoryErrorBase):
     pass
+
+
+class MemoryQueryError(MemoryErrorBase):
+    pass
