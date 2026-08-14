@@ -23,7 +23,11 @@ def _report_timestamp(report: dict, report_path: Path) -> float:
         return 0.0
 
 
-def load_reports(report_directory="reports", hostname: str | None = None) -> list[dict]:
+def load_reports(
+    report_directory="reports",
+    hostname: str | None = None,
+    system_id: str | None = None,
+) -> list[dict]:
     """Load saved CyberWatchtower JSON reports in chronological order."""
 
     report_dir = Path(report_directory)
@@ -38,10 +42,17 @@ def load_reports(report_directory="reports", hostname: str | None = None) -> lis
             with report_path.open("r", encoding="utf-8") as file:
                 data = json.load(file)
 
-            if hostname is not None:
-                report_hostname = data.get("system", {}).get("hostname")
-                if report_hostname != hostname:
+            report_system = data.get("system", {})
+            report_system_id = report_system.get("system_id")
+
+            if system_id is not None:
+                if report_system_id is not None:
+                    if report_system_id != system_id:
+                        continue
+                elif hostname is None or report_system.get("hostname") != hostname:
                     continue
+            elif hostname is not None and report_system.get("hostname") != hostname:
+                continue
 
             data["_report_path"] = str(report_path)
             reports_with_timestamps.append(

@@ -84,7 +84,10 @@ def main():
 
     report_path = save_json_report(results)
 
-    reports = load_reports(hostname=results["system"].get("hostname"))
+    reports = load_reports(
+        hostname=results["system"].get("hostname"),
+        system_id=results["system"].get("system_id"),
+    )
 
     comparison = None
 

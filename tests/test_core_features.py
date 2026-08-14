@@ -127,6 +127,7 @@ class SystemInformationTests(unittest.TestCase):
             set(result),
             {
                 "hostname",
+                "system_id",
                 "username",
                 "operating_system",
                 "os_version",
@@ -135,6 +136,7 @@ class SystemInformationTests(unittest.TestCase):
             },
         )
         self.assertTrue(result["hostname"])
+        self.assertTrue(result["system_id"].startswith("cwt-"))
 
 
 if __name__ == "__main__":

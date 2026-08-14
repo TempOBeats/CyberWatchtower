@@ -25,6 +25,64 @@ def _write_report(path: Path, hostname: str, generated_at: str) -> None:
 
 
 class ReportHistoryTests(unittest.TestCase):
+    def test_system_id_isolates_hosts_even_when_hostnames_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory)
+            for filename, system_id in (("a.json", "cwt-a"), ("b.json", "cwt-b")):
+                (report_dir / filename).write_text(
+                    json.dumps(
+                        {
+                            "generated_at": "2026-08-13T12:00:00+00:00",
+                            "system": {
+                                "hostname": "same-hostname",
+                                "system_id": system_id,
+                            },
+                            "security_score": {"score": 100},
+                            "findings": [],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            reports = load_reports(
+                report_dir,
+                hostname="same-hostname",
+                system_id="cwt-a",
+            )
+
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["system"]["system_id"], "cwt-a")
+
+    def test_legacy_report_uses_hostname_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory)
+            _write_report(
+                report_dir / "legacy.json",
+                "legacy-host",
+                "2026-08-13T12:00:00+00:00",
+            )
+
+            reports = load_reports(
+                report_dir,
+                hostname="legacy-host",
+                system_id="cwt-current",
+            )
+
+        self.assertEqual(len(reports), 1)
+
+    def test_system_id_without_hostname_does_not_admit_legacy_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory)
+            _write_report(
+                report_dir / "legacy.json",
+                "legacy-host",
+                "2026-08-13T12:00:00+00:00",
+            )
+
+            reports = load_reports(report_dir, system_id="cwt-current")
+
+        self.assertEqual(reports, [])
+
     def test_reports_are_filtered_by_host_and_sorted_by_generated_time(self):
         with tempfile.TemporaryDirectory() as directory:
             report_dir = Path(directory)
