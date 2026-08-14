@@ -1,5 +1,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from cyberwatchtower.advisor.questions import answer_question
@@ -25,6 +27,9 @@ from cyberwatchtower.core.grounding import require_grounded
 from cyberwatchtower.intelligence import analyze_history
 from cyberwatchtower.model_gateway.base import ModelGateway
 from cyberwatchtower.model_gateway.deterministic import DeterministicGateway, GatewayIntent
+from cyberwatchtower.memory.context import build_memory_context, persisted_finding_candidates
+from cyberwatchtower.memory.service import SecurityMemory
+from cyberwatchtower.memory.investigation_models import ReferenceState, ReferenceType
 
 
 class OrchestratorState(str, Enum):
@@ -53,9 +58,11 @@ class IntelligenceOrchestrator:
         self,
         gateway: ModelGateway | None = None,
         registry: CapabilityRegistry | None = None,
+        memory: SecurityMemory | None = None,
     ) -> None:
         self.gateway = gateway or DeterministicGateway()
-        self.registry = registry or build_read_only_registry()
+        self.memory = memory
+        self.registry = registry or build_read_only_registry(memory)
 
     def _plan(self, intent: str, finding_id: str | None) -> CapabilityPlan:
         requests = [
@@ -139,11 +146,20 @@ class IntelligenceOrchestrator:
         self._check_policy(plan)
         states.append(OrchestratorState.POLICY_CHECKED)
 
-        capability_context = CapabilityContext(report_directory, tuple(loaded_reports))
+        initial_system_id = (
+            loaded_reports[-1].get("system", {}).get("system_id")
+            if loaded_reports else None
+        )
+        capability_context = CapabilityContext(
+            report_directory, tuple(loaded_reports), self.memory, initial_system_id
+        )
         if not loaded_reports:
             loaded_reports = list(self.registry.execute(plan.requests[0], capability_context))
             loaded_reports = self._isolate_latest_system(loaded_reports)
-            capability_context = CapabilityContext(report_directory, tuple(loaded_reports))
+            system_id = loaded_reports[-1].get("system", {}).get("system_id") if loaded_reports else None
+            capability_context = CapabilityContext(
+                report_directory, tuple(loaded_reports), self.memory, system_id
+            )
         if not loaded_reports:
             response = self._notice(intent, "No saved CyberWatchtower reports are available.")
             return OrchestratorResult(
@@ -161,12 +177,31 @@ class IntelligenceOrchestrator:
                 CapabilityRequest("explain_finding", {"finding_id": finding_id}),
                 capability_context,
             )
-        briefing = build_security_briefing(
+        system_id = loaded_reports[-1].get("system", {}).get("system_id")
+        memory_context = None
+        base_briefing = build_security_briefing(
             loaded_reports[-1], comparison, analyze_history(loaded_reports)
         )
+        if self.memory is not None and system_id:
+            finding_ids = tuple(item.finding_id for item in base_briefing.advisor_context.findings)
+            memory_context = build_memory_context(
+                self.memory, system_id=system_id, finding_ids=finding_ids,
+                findings=base_briefing.advisor_context.findings,
+                action_ids=tuple(item.action_id for item in base_briefing.advisory.actions),
+            )
+        briefing = base_briefing if memory_context is None else build_security_briefing(
+            loaded_reports[-1], comparison, analyze_history(loaded_reports), memory_context
+        )
         states.append(OrchestratorState.EXECUTED)
+        persisted_candidates = ()
+        if self.memory is not None and system_id:
+            persisted_candidates = persisted_finding_candidates(
+                self.memory, system_id=system_id, session_id=session.session_id,
+                known_finding_ids={item.finding_id for item in briefing.advisor_context.findings},
+            )
         finding_id = resolve_finding_reference(
-            request, briefing.advisor_context, session, explicit_finding_id
+            request, briefing.advisor_context, session, explicit_finding_id,
+            persisted_candidates,
         )
 
         if intent == GatewayIntent.SECURITY_BRIEFING.value:
@@ -201,6 +236,8 @@ class IntelligenceOrchestrator:
                 "Supported requests are: security briefing, why this is dangerous, what changed, and what to fix first.",
             )
 
+        if memory_context and memory_context.limitation and response.notice is None:
+            response = replace(response, notice=memory_context.limitation)
         response = require_grounded(response)
         states.extend((OrchestratorState.GROUNDED, OrchestratorState.COMPLETED))
         session.last_intent = intent
@@ -208,6 +245,18 @@ class IntelligenceOrchestrator:
         focused_action = response.action_ids[0] if response.action_ids else None
         if focused_finding:
             session.focus(focused_finding, focused_action)
+            if self.memory is not None and system_id:
+                try:
+                    now = datetime.now(timezone.utc)
+                    self.memory.remember_reference(
+                        system_id=system_id, session_id=session.session_id,
+                        reference_type=ReferenceType.FINDING,
+                        target_id=focused_finding,
+                        reference_state=ReferenceState.FOCUSED,
+                        created_at=now, expires_at=now + timedelta(hours=24),
+                    )
+                except Exception:
+                    pass
         return OrchestratorResult(
             OrchestratorState.COMPLETED,
             tuple(states),

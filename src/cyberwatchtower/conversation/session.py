@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from uuid import uuid4
 
 from cyberwatchtower.advisor.models import AdvisorContext
 
@@ -7,6 +8,7 @@ from cyberwatchtower.advisor.models import AdvisorContext
 class ConversationSession:
     """Ephemeral conversational references; intentionally has no persistence API."""
 
+    session_id: str = field(default_factory=lambda: f"session:{uuid4().hex}")
     focused_finding_id: str | None = None
     focused_action_id: str | None = None
     last_intent: str | None = None
@@ -24,6 +26,7 @@ def resolve_finding_reference(
     context: AdvisorContext,
     session: ConversationSession,
     explicit_finding_id: str | None = None,
+    persisted_candidates: tuple[str, ...] = (),
 ) -> str | None:
     known = {finding.finding_id: finding for finding in context.findings}
     if explicit_finding_id in known:
@@ -40,5 +43,11 @@ def resolve_finding_reference(
     if len(title_matches) == 1:
         return title_matches[0]
     if any(token in normalized.split() for token in ("it", "this", "that")):
-        return session.focused_finding_id
+        if session.focused_finding_id in known:
+            return session.focused_finding_id
+        valid_persisted = tuple(
+            candidate for candidate in persisted_candidates if candidate in known
+        )
+        if len(valid_persisted) == 1:
+            return valid_persisted[0]
     return None

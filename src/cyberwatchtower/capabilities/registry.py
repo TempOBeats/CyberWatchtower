@@ -2,9 +2,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.history import compare_reports, load_reports
+
+if TYPE_CHECKING:
+    from cyberwatchtower.memory.service import SecurityMemory
 
 
 class PermissionClass(str, Enum):
@@ -28,6 +32,8 @@ class CapabilityPlan:
 class CapabilityContext:
     report_directory: str | Path = "reports"
     reports: tuple[dict, ...] = ()
+    memory: "SecurityMemory | None" = None
+    system_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +122,73 @@ def _explain_finding(request: CapabilityRequest, context: CapabilityContext):
     )
 
 
-def build_read_only_registry() -> CapabilityRegistry:
+def _memory_parameters(request, context, *, allowed=()):
+    if context.memory is None or not context.system_id:
+        raise CapabilityDenied("Persistent memory is unavailable.")
+    if set(request.parameters) - set(allowed):
+        raise CapabilityDenied("Memory capability parameters are not allowlisted.")
+    requested_system = request.parameters.get("system_id")
+    if requested_system != context.system_id or not isinstance(requested_system, str):
+        raise CapabilityDenied("Memory capability requires the explicit current system_id.")
+    return context.memory, requested_system
+
+
+def _memory_timeline(request, context):
+    from cyberwatchtower.memory.history_models import FindingHistoryQuery
+    memory, system_id = _memory_parameters(request, context, allowed=("system_id", "finding_id"))
+    finding_id = request.parameters.get("finding_id")
+    if not isinstance(finding_id, str) or not finding_id:
+        raise CapabilityDenied("finding_id must be a non-empty string.")
+    return memory.finding_timeline(FindingHistoryQuery(system_id, finding_id))
+
+
+def _memory_recurring(request, context):
+    from cyberwatchtower.memory.history_models import RecurringFindingsQuery
+    memory, system_id = _memory_parameters(request, context, allowed=("system_id",))
+    return memory.recurring_findings(RecurringFindingsQuery(system_id))
+
+
+def _memory_score_trend(request, context):
+    from cyberwatchtower.memory.history_models import ScoreTrendQuery
+    memory, system_id = _memory_parameters(
+        request, context, allowed=("system_id", "start_at", "end_at")
+    )
+    return memory.score_trend(ScoreTrendQuery(
+        system_id, request.parameters.get("start_at"), request.parameters.get("end_at")
+    ))
+
+
+def _memory_exceptions(request, context):
+    from datetime import datetime
+    memory, system_id = _memory_parameters(request, context, allowed=("system_id", "at"))
+    at = request.parameters.get("at")
+    if not isinstance(at, datetime):
+        raise CapabilityDenied("at must be a typed datetime.")
+    records = memory.active_exceptions(system_id=system_id, at=at)
+    return tuple((item.exception_id, item.scope.scope_type.value, item.expires_at) for item in records)
+
+
+def _memory_previous_investigation(request, context):
+    memory, system_id = _memory_parameters(request, context, allowed=("system_id", "finding_id"))
+    finding_id = request.parameters.get("finding_id")
+    if not isinstance(finding_id, str) or not finding_id:
+        raise CapabilityDenied("finding_id must be a non-empty string.")
+    record = memory.previous_investigation_for_finding(system_id=system_id, finding_id=finding_id)
+    return None if record is None else (record.investigation_id, record.status.value, record.closed_at)
+
+
+def _memory_decisions(request, context):
+    from cyberwatchtower.memory.decision_models import TypedScope
+    memory, system_id = _memory_parameters(request, context, allowed=("system_id", "scope"))
+    scope = request.parameters.get("scope")
+    if not isinstance(scope, TypedScope):
+        raise CapabilityDenied("scope must be a supported typed scope.")
+    records = memory.decisions_for_scope(system_id=system_id, scope=scope)
+    return tuple((item.decision_id, item.decision_type.value, item.status.value,
+                  item.effective_at, item.expires_at) for item in records)
+
+
+def build_read_only_registry(memory: "SecurityMemory | None" = None) -> CapabilityRegistry:
     registry = CapabilityRegistry()
     for capability_id, handler in (
         ("load_reports", _load_reports),
@@ -131,4 +203,14 @@ def build_read_only_registry() -> CapabilityRegistry:
             capability_id,
             PermissionClass.USER_APPROVAL_REQUIRED,
         ))
+    if memory is not None:
+        for capability_id, handler in (
+            ("memory.get_finding_timeline", _memory_timeline),
+            ("memory.list_recurring_findings", _memory_recurring),
+            ("memory.get_score_trend", _memory_score_trend),
+            ("memory.list_active_exceptions", _memory_exceptions),
+            ("memory.get_previous_investigation", _memory_previous_investigation),
+            ("memory.get_decisions_for_scope", _memory_decisions),
+        ):
+            registry.register(CapabilityDefinition(capability_id, PermissionClass.READ_ONLY, handler))
     return registry
