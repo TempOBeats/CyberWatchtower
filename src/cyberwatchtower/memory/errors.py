@@ -40,3 +40,7 @@ class MemoryQueryError(MemoryErrorBase):
 
 class MemoryDecisionError(MemoryErrorBase):
     pass
+
+
+class MemoryInvestigationError(MemoryErrorBase):
+    pass
