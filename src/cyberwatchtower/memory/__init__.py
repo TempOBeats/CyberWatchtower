@@ -8,6 +8,7 @@ from .ingestion_models import (
     ReportIngestionResult,
 )
 from .models import CURRENT_MEMORY_SCHEMA_VERSION
+from .lifecycle import rebuild_system_lifecycle
 from .provenance import MemoryProvenance, provenance_epistemic_role
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "ReportIngestionResult",
     "ingest_report",
     "open_memory_database",
+    "rebuild_system_lifecycle",
     "provenance_epistemic_role",
 ]

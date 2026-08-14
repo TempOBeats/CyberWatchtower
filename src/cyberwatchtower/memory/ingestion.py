@@ -27,6 +27,7 @@ from .normalizers import (
     normalize_report,
 )
 from .provenance import MemoryProvenance
+from .lifecycle import rebuild_lifecycle_in_transaction
 
 
 MAX_REPORT_BYTES = 10 * 1024 * 1024
@@ -415,6 +416,7 @@ def ingest_report(
             _write_finding(
                 connection, normalized, finding, system_id, report_id, now
             )
+        rebuild_lifecycle_in_transaction(connection, system_id)
         connection.commit()
         diagnostics = []
         if omitted_evidence:

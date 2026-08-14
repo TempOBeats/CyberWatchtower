@@ -28,3 +28,7 @@ class MemoryIncompatibleVersion(MemoryErrorBase):
 
 class MemoryIntegrityError(MemoryErrorBase):
     pass
+
+
+class MemoryLifecycleError(MemoryErrorBase):
+    pass
