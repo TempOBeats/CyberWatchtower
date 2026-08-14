@@ -18,10 +18,40 @@ class CoverageState(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class AssessmentAssurance(str, Enum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    INCOMPLETE = "INCOMPLETE"
+
+
 class ScanDomain(str, Enum):
     FIREWALL_TECHNOLOGY = "firewall_technology"
     IPTABLES_INPUT_POLICY = "iptables_input_policy"
     NETWORK_SOCKET_INSPECTION = "network_socket_inspection"
+
+
+SOURCE_COVERAGE_REQUIREMENTS: dict[str, tuple[ScanDomain, ...]] = {
+    "network": (ScanDomain.NETWORK_SOCKET_INSPECTION,),
+    # Current firewall findings share one source value. Requiring both domains
+    # is conservative and avoids guessing from finding titles.
+    "firewall": (
+        ScanDomain.FIREWALL_TECHNOLOGY,
+        ScanDomain.IPTABLES_INPUT_POLICY,
+    ),
+}
+
+
+COVERAGE_LIMITATION_MESSAGES: dict[ScanDomain, str] = {
+    ScanDomain.FIREWALL_TECHNOLOGY: (
+        "firewall technology detection was not completely assessed"
+    ),
+    ScanDomain.IPTABLES_INPUT_POLICY: (
+        "iptables INPUT policy was not completely assessed"
+    ),
+    ScanDomain.NETWORK_SOCKET_INSPECTION: (
+        "listening-service inspection was not completely assessed"
+    ),
+}
 
 
 class LegacyIdentityState(str, Enum):
@@ -46,6 +76,31 @@ class LegacyIdentityResolution:
     reason: str
 
 
+def legacy_resolution_authorizes(
+    resolution: LegacyIdentityResolution | None,
+    *,
+    system_id: str,
+    hostname: str | None,
+) -> bool:
+    """Validate an explicit legacy link without assigning identity to the report."""
+
+    if not isinstance(resolution, LegacyIdentityResolution):
+        return False
+    valid_state_policy = (
+        resolution.state == LegacyIdentityState.HOSTNAME_FALLBACK
+        and resolution.policy == LegacyLinkPolicy.ALLOW_EXPLICIT_HOSTNAME_FALLBACK
+    ) or (
+        resolution.state == LegacyIdentityState.USER_LINKED
+        and resolution.policy == LegacyLinkPolicy.REQUIRE_USER_LINK
+    )
+    return bool(
+        valid_state_policy
+        and resolution.system_id == system_id
+        and hostname
+        and resolution.legacy_hostname == hostname
+    )
+
+
 def report_schema_version(report: Mapping) -> str:
     """Return the explicit schema version or the legacy version for old reports."""
 
@@ -56,7 +111,7 @@ def report_schema_version(report: Mapping) -> str:
 def normalize_coverage(coverage: Mapping | None) -> dict[str, str]:
     """Return every known scan domain, conservatively defaulting to UNKNOWN."""
 
-    coverage = coverage or {}
+    coverage = coverage if isinstance(coverage, Mapping) else {}
     normalized = {}
     for domain in ScanDomain:
         try:
@@ -65,6 +120,40 @@ def normalize_coverage(coverage: Mapping | None) -> dict[str, str]:
             state = CoverageState.UNKNOWN
         normalized[domain.value] = state.value
     return normalized
+
+
+def coverage_complete_for_source(source: object, coverage: Mapping | None) -> bool:
+    """Return whether structured coverage can prove a source-domain absence."""
+
+    requirements = SOURCE_COVERAGE_REQUIREMENTS.get(str(source).casefold())
+    if not requirements:
+        return False
+    normalized = normalize_coverage(coverage)
+    return all(
+        normalized[domain.value] == CoverageState.COMPLETE.value
+        for domain in requirements
+    )
+
+
+def assessment_assurance_summary(coverage: Mapping | None) -> dict[str, object]:
+    """Derive assurance separately from the deterministic severity score."""
+
+    normalized = normalize_coverage(coverage)
+    complete_count = sum(
+        state == CoverageState.COMPLETE.value for state in normalized.values()
+    )
+    if complete_count == len(normalized):
+        level = AssessmentAssurance.COMPLETE
+    elif complete_count == 0:
+        level = AssessmentAssurance.INCOMPLETE
+    else:
+        level = AssessmentAssurance.PARTIAL
+    limitations = tuple(
+        COVERAGE_LIMITATION_MESSAGES[domain]
+        for domain in ScanDomain
+        if normalized[domain.value] != CoverageState.COMPLETE.value
+    )
+    return {"level": level.value, "limitations": limitations}
 
 
 _INGESTION_ONLY_KEYS = frozenset({

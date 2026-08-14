@@ -7,22 +7,10 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
-from cyberwatchtower.report_contracts import CoverageState, ScanDomain, normalize_coverage
+from cyberwatchtower.report_contracts import coverage_complete_for_source
 
 from .database import MemoryDatabase
 from .errors import MemoryCorrupt, MemoryLifecycleError, MemoryLocked
-
-
-SOURCE_COVERAGE_REQUIREMENTS: dict[str, tuple[ScanDomain, ...]] = {
-    "network": (ScanDomain.NETWORK_SOCKET_INSPECTION,),
-    # Current reports use one source value for both firewall technology and
-    # INPUT-policy findings. Requiring both domains is conservative and avoids
-    # a prose/title-based classification or a false confirmed resolution.
-    "firewall": (
-        ScanDomain.FIREWALL_TECHNOLOGY,
-        ScanDomain.IPTABLES_INPUT_POLICY,
-    ),
-}
 
 
 @dataclass
@@ -49,15 +37,11 @@ def _event_id(system_id: str, report_id: str, finding_id: str, event_type: str) 
 
 
 def _coverage_complete(source: str, coverage_json: str) -> bool:
-    requirements = SOURCE_COVERAGE_REQUIREMENTS.get(source.casefold())
-    if not requirements:
-        return False
     try:
         raw = json.loads(coverage_json)
     except (TypeError, json.JSONDecodeError):
         return False
-    coverage = normalize_coverage(raw if isinstance(raw, dict) else None)
-    return all(coverage[domain.value] == CoverageState.COMPLETE.value for domain in requirements)
+    return coverage_complete_for_source(source, raw if isinstance(raw, dict) else None)
 
 
 def _derive(connection: sqlite3.Connection, system_id: str):

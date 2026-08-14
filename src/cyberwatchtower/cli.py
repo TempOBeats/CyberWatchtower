@@ -241,6 +241,10 @@ def main(argv=None):
     print("==============")
     print(f"Score: {score['score']}/100")
     print(f"Risk Level: {score['risk_level']}")
+    assurance = results.get("assessment_assurance", {})
+    print(f"Assessment Assurance: {assurance.get('level', 'INCOMPLETE')}")
+    for limitation in assurance.get("limitations", ()):
+        print(f"Coverage Limitation: {limitation}")
 
     print("FINDINGS:")
     print(f" - Critical: {score['counts']['CRITICAL']}")
@@ -297,6 +301,14 @@ def main(argv=None):
 
             for finding in comparison["resolved_findings"]:
                 print(f"[{finding['severity']}] {finding['title']}")
+
+        if comparison.get("uncertain_findings"):
+            print()
+            print("DISAPPEARANCE UNCERTAIN")
+            print("-----------------------")
+            for finding in comparison["uncertain_findings"]:
+                print(f"[{finding['severity']}] {finding['title']}")
+            print("Coverage was insufficient to confirm resolution.")
 
     intelligence = analyze_history(reports)
 

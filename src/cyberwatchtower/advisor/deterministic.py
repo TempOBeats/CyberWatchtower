@@ -49,7 +49,8 @@ def _posture_summary(context: AdvisorContext) -> str:
     )
     return (
         f"CyberWatchtower scored this system {context.score}/100 with a "
-        f"{context.risk_level} risk level. The current assessment contains "
+        f"{context.risk_level} risk level. Assessment assurance is "
+        f"{context.assessment_assurance}. The current assessment contains "
         f"{confirmed} confirmed risk(s), {potential} potential risk(s), and "
         f"{incomplete} incomplete assessment(s)."
     )
@@ -141,6 +142,14 @@ def _changes_summary(context: AdvisorContext) -> str:
             finding.title for finding in context.resolved_findings[:3]
         )
         summary += f" Resolved: {resolved_titles}."
+    if context.uncertain_findings:
+        uncertain_titles = "; ".join(
+            finding.title for finding in context.uncertain_findings[:3]
+        )
+        summary += (
+            " Disappearance uncertain because coverage was incomplete: "
+            f"{uncertain_titles}."
+        )
     return summary
 
 
@@ -170,11 +179,15 @@ def build_deterministic_advisory(context: AdvisorContext) -> AdvisoryReport:
         key=finding_priority_key,
         reverse=True,
     )
-    coverage_warnings = tuple(
+    finding_warnings = tuple(
         finding.title
         for finding in context.findings
         if finding.assessment_state == AssessmentState.INCOMPLETE
     )
+    coverage_warnings = tuple(dict.fromkeys((
+        *context.coverage_limitations,
+        *finding_warnings,
+    )))
     next_steps = tuple(action.action for action in actions[:3])
 
     if not next_steps:

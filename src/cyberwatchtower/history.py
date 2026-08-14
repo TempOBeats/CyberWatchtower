@@ -3,6 +3,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .finding_identity import finding_identity
+from .report_contracts import (
+    LegacyIdentityResolution,
+    canonical_report_digest,
+    coverage_complete_for_source,
+    legacy_resolution_authorizes,
+)
 
 
 def _report_timestamp(report: dict, report_path: Path) -> float:
@@ -27,6 +33,7 @@ def load_reports(
     report_directory="reports",
     hostname: str | None = None,
     system_id: str | None = None,
+    legacy_resolutions: dict[str, LegacyIdentityResolution] | None = None,
 ) -> list[dict]:
     """Load saved CyberWatchtower JSON reports in chronological order."""
 
@@ -49,8 +56,16 @@ def load_reports(
                 if report_system_id is not None:
                     if report_system_id != system_id:
                         continue
-                elif hostname is None or report_system.get("hostname") != hostname:
-                    continue
+                else:
+                    resolution = (legacy_resolutions or {}).get(
+                        canonical_report_digest(data)
+                    )
+                    if not legacy_resolution_authorizes(
+                        resolution,
+                        system_id=system_id,
+                        hostname=report_system.get("hostname"),
+                    ):
+                        continue
             elif hostname is not None and report_system.get("hostname") != hostname:
                 continue
 
@@ -59,7 +74,7 @@ def load_reports(
                 (_report_timestamp(data, report_path), str(report_path), data)
             )
 
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             continue
 
     reports_with_timestamps.sort(key=lambda item: (item[0], item[1]))
@@ -96,6 +111,15 @@ def compare_reports(previous: dict, current: dict) -> dict:
     new_identities = set(current_findings) - set(previous_findings)
     resolved_identities = set(previous_findings) - set(current_findings)
 
+    confirmed_resolved_identities = {
+        identity
+        for identity in resolved_identities
+        if coverage_complete_for_source(
+            previous_findings[identity].get("source"), current.get("coverage")
+        )
+    }
+    uncertain_identities = resolved_identities - confirmed_resolved_identities
+
     new_findings = [
         current_findings[identity]
         for identity in sorted(new_identities)
@@ -103,7 +127,12 @@ def compare_reports(previous: dict, current: dict) -> dict:
 
     resolved_findings = [
         previous_findings[identity]
-        for identity in sorted(resolved_identities)
+        for identity in sorted(confirmed_resolved_identities)
+    ]
+
+    uncertain_findings = [
+        previous_findings[identity]
+        for identity in sorted(uncertain_identities)
     ]
 
     return {
@@ -115,4 +144,5 @@ def compare_reports(previous: dict, current: dict) -> dict:
         "current_risk": current_score.get("risk_level", "UNKNOWN"),
         "new_findings": new_findings,
         "resolved_findings": resolved_findings,
+        "uncertain_findings": uncertain_findings,
     }

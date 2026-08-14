@@ -53,6 +53,9 @@ class AdvisorContext:
     total_scans: int
     average_score: float
     overall_trend: str
+    assessment_assurance: str = "INCOMPLETE"
+    coverage_limitations: tuple[str, ...] = ()
+    uncertain_findings: tuple[ChangeFinding, ...] = ()
 
 
 @dataclass(frozen=True)

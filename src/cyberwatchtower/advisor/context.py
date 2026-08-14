@@ -2,6 +2,7 @@ from collections.abc import Mapping
 
 from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.models import AssessmentState, FindingKind
+from cyberwatchtower.report_contracts import assessment_assurance_summary
 
 from .models import AdvisoryFinding, AdvisorContext, ChangeFinding
 
@@ -127,6 +128,7 @@ def build_advisor_context(
 
     score_data = current_report.get("security_score", {})
     counts = score_data.get("counts", {})
+    assurance = assessment_assurance_summary(current_report.get("coverage"))
 
     return AdvisorContext(
         schema_version="1.0",
@@ -159,4 +161,10 @@ def build_advisor_context(
         total_scans=int(intelligence.get("total_scans", 0) or 0),
         average_score=float(intelligence.get("average_score", 0) or 0),
         overall_trend=str(intelligence.get("overall_trend", "UNKNOWN")),
+        assessment_assurance=str(assurance["level"]),
+        coverage_limitations=tuple(assurance["limitations"]),
+        uncertain_findings=tuple(
+            _change_finding(finding)
+            for finding in comparison.get("uncertain_findings", [])
+        ),
     )

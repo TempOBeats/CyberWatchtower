@@ -94,7 +94,11 @@ def _what_changed(
         answer=advisory.changes_summary,
         finding_ids=tuple(
             finding.finding_id
-            for finding in (*context.new_findings, *context.resolved_findings)
+            for finding in (
+                *context.new_findings,
+                *context.resolved_findings,
+                *context.uncertain_findings,
+            )
         ),
     )
 
