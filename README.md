@@ -54,6 +54,21 @@ The command prints the assessment and saves a JSON report under `reports/`.
 Run with elevated privileges only when you are authorized to inspect the local
 system and need firewall or process details that are unavailable to your user.
 
+Generate a grounded briefing or ask a supported question using already-saved
+reports without starting a new scan:
+
+```bash
+.venv/bin/cyberwatchtower briefing
+.venv/bin/cyberwatchtower ask "What changed?"
+.venv/bin/cyberwatchtower ask "What should I fix first?"
+.venv/bin/cyberwatchtower ask "Why is this dangerous?" --finding-id FINDING_ID
+```
+
+Intelligence Core v0.1 uses the deterministic scanner and Advisor as its source
+of truth. Its automatic allowlist can only load reports, compare saved scans,
+and explain an existing finding. It does not run shell commands, collect fresh
+host data, remediate findings, or contact a model provider.
+
 ## Development
 
 Run the standard-library test suite without writing bytecode caches:

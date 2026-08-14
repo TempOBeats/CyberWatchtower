@@ -1,3 +1,6 @@
+import argparse
+import sys
+
 from .scanner import run_scan
 from .reporting import save_json_report
 from .history import load_reports, compare_reports
@@ -29,7 +32,52 @@ def _display_advisor(current_report, comparison, intelligence):
         )
 
 
-def main():
+def _intelligence_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="cyberwatchtower")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    briefing = subparsers.add_parser("briefing", help="Brief saved scan data")
+    briefing.add_argument("--reports", default="reports")
+    ask = subparsers.add_parser("ask", help="Ask a supported grounded question")
+    ask.add_argument("question")
+    ask.add_argument("--finding-id")
+    ask.add_argument("--reports", default="reports")
+    return parser
+
+
+def _run_intelligence_command(arguments: list[str]) -> None:
+    from .briefing.rendering import render_grounded_response
+    from .conversation.session import ConversationSession
+    from .core.orchestrator import IntelligenceOrchestrator
+
+    parsed = _intelligence_parser().parse_args(arguments)
+    request = (
+        "Give me my security briefing"
+        if parsed.command == "briefing"
+        else parsed.question
+    )
+    try:
+        result = IntelligenceOrchestrator().handle(
+            request,
+            session=ConversationSession(),
+            report_directory=parsed.reports,
+            explicit_finding_id=getattr(parsed, "finding_id", None),
+        )
+        print(render_grounded_response(result.response))
+    except Exception:
+        print("CYBERWATCHTOWER INTELLIGENCE")
+        print("============================")
+        print(
+            "Intelligence Core unavailable; saved reports and the deterministic "
+            "scanner remain unchanged."
+        )
+
+
+def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] in {"briefing", "ask"}:
+        _run_intelligence_command(arguments)
+        return
+
     print()
     print("================================")
     print("        CYBERWATCHTOWER")
