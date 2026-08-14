@@ -24,6 +24,12 @@ REQUIRED_TABLES = frozenset({
     "findings",
     "finding_occurrences",
     "finding_lifecycle_events",
+    "user_decisions",
+    "exceptions",
+    "baselines",
+    "baseline_entries",
+    "recommendations_shown",
+    "action_responses",
 })
 REQUIRED_INDEXES = frozenset({
     "idx_system_aliases_lookup",
@@ -33,6 +39,13 @@ REQUIRED_INDEXES = frozenset({
     "idx_occurrences_finding_observed",
     "idx_occurrences_system_finding_observed",
     "idx_lifecycle_finding_occurred",
+    "idx_decisions_scope",
+    "idx_exceptions_active",
+    "idx_exceptions_scope",
+    "idx_baselines_history",
+    "idx_baseline_entries_order",
+    "idx_recommendations_action",
+    "idx_action_responses_history",
 })
 
 
