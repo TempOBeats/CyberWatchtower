@@ -7,13 +7,17 @@ from .firewall import (
 )
 from .network import (
     inspect_listening_services,
-    parse_listening_services,
+    parse_listening_services_checked,
     enrich_process_intelligence,
     assess_network_exposure,
     classify_service_risk,
 )
 from .scoring import calculate_security_score
-from .report_contracts import CoverageState, ScanDomain
+from .report_contracts import (
+    CoverageState,
+    ScanDomain,
+    assessment_assurance_summary,
+)
 
 
 def run_scan() -> dict:
@@ -30,10 +34,12 @@ def run_scan() -> dict:
     network = inspect_listening_services()
 
     if network.get("accessible"):
-        coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = CoverageState.COMPLETE.value
-        services = parse_listening_services(
-            network.get("raw_output", "")
+        parsed_sockets = parse_listening_services_checked(network.get("raw_output", ""))
+        coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = (
+            CoverageState.COMPLETE.value
+            if parsed_sockets.complete else CoverageState.INCOMPLETE.value
         )
+        services = list(parsed_sockets.services)
         services = enrich_process_intelligence(services)
 
         network_findings = assess_network_exposure(services)
@@ -53,13 +59,34 @@ def run_scan() -> dict:
                 )
             )
 
+        if not parsed_sockets.complete:
+            findings.append(
+                Finding(
+                    title="Listening-service inspection incomplete",
+                    description=(
+                        "CyberWatchtower could not validate all socket inspection "
+                        "output, so network exposure may be underreported."
+                    ),
+                    severity=Severity.LOW,
+                    recommendation=(
+                        "Verify the local ss utility and repeat the assessment."
+                    ),
+                    evidence=[
+                        f"Failure code: {parsed_sockets.code.value}",
+                        parsed_sockets.message,
+                    ],
+                    confidence=100,
+                    source="network",
+                    kind=FindingKind.COVERAGE_GAP,
+                    assessment_state=AssessmentState.INCOMPLETE,
+                )
+            )
+
     else:
         coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = CoverageState.INCOMPLETE.value
-        error = network.get("error")
         evidence = [network.get("message", "Socket inspection was incomplete.")]
-
-        if error:
-            evidence.append(f"Inspection error: {error}")
+        failure_code = network.get("failure_code", "SOCKET_INSPECTION_INCOMPLETE")
+        evidence.append(f"Failure code: {failure_code}")
 
         findings.append(
             Finding(
@@ -197,6 +224,7 @@ def run_scan() -> dict:
             )
 
     score = calculate_security_score(findings)
+    assurance = assessment_assurance_summary(coverage)
 
     return {
         "system": system,
@@ -204,4 +232,5 @@ def run_scan() -> dict:
         "coverage": coverage,
         "findings": findings,
         "score": score,
+        "assessment_assurance": assurance,
     }

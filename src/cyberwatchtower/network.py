@@ -1,6 +1,8 @@
 import shutil
 import subprocess
 import re
+from dataclasses import dataclass
+from enum import Enum
 from .service_intelligence import lookup_service
 from .process_intelligence import inspect_process_application
 
@@ -18,17 +20,78 @@ def _run_command(command: list[str]) -> dict:
         return {
             "success": result.returncode == 0,
             "stdout": result.stdout.strip(),
-            "stderr": result.stderr.strip(),
+            "stderr_present": bool(result.stderr.strip()),
             "returncode": result.returncode,
+            "failure_code": (
+                None if result.returncode == 0 and not result.stderr.strip()
+                else "SOCKET_COMMAND_FAILED"
+            ),
         }
 
     except (subprocess.SubprocessError, OSError) as exc:
         return {
             "success": False,
             "stdout": "",
-            "stderr": str(exc),
+            "stderr_present": False,
             "returncode": -1,
+            "failure_code": (
+                "SOCKET_COMMAND_TIMEOUT"
+                if isinstance(exc, subprocess.TimeoutExpired)
+                else "SOCKET_COMMAND_UNAVAILABLE"
+            ),
         }
+
+
+class SocketCompletenessCode(str, Enum):
+    COMPLETE = "COMPLETE"
+    COMMAND_UNAVAILABLE = "SOCKET_COMMAND_UNAVAILABLE"
+    COMMAND_FAILED = "SOCKET_COMMAND_FAILED"
+    COMMAND_TIMEOUT = "SOCKET_COMMAND_TIMEOUT"
+    OUTPUT_MALFORMED = "SOCKET_OUTPUT_MALFORMED"
+
+
+@dataclass(frozen=True)
+class SocketParseResult:
+    services: tuple[dict, ...]
+    complete: bool
+    code: SocketCompletenessCode
+    message: str
+
+
+_EXPECTED_HEADER_FIELDS = (
+    "netid", "state", "recv-q", "send-q", "local", "address:port",
+    "peer", "address:port",
+)
+
+
+def parse_listening_services_checked(raw_output: str) -> SocketParseResult:
+    """Parse `ss` output and fail coverage closed on any structural doubt."""
+
+    if not isinstance(raw_output, str):
+        return SocketParseResult((), False, SocketCompletenessCode.OUTPUT_MALFORMED,
+                                 "Socket output was not textual.")
+    lines = raw_output.splitlines()
+    if not lines:
+        return SocketParseResult((), False, SocketCompletenessCode.OUTPUT_MALFORMED,
+                                 "Socket output did not contain the expected header.")
+    header = tuple(lines[0].casefold().split())
+    if header[:len(_EXPECTED_HEADER_FIELDS)] != _EXPECTED_HEADER_FIELDS:
+        return SocketParseResult((), False, SocketCompletenessCode.OUTPUT_MALFORMED,
+                                 "Socket output did not match the expected structure.")
+
+    services = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        parsed = _parse_service_row(line)
+        if parsed is None:
+            return SocketParseResult(
+                tuple(services), False, SocketCompletenessCode.OUTPUT_MALFORMED,
+                "Socket output contained an unexpected or incomplete service row.",
+            )
+        services.append(parsed)
+    return SocketParseResult(tuple(services), True, SocketCompletenessCode.COMPLETE,
+                             "Socket output was parsed completely.")
 
 
 def inspect_listening_services() -> dict:
@@ -39,20 +102,24 @@ def inspect_listening_services() -> dict:
     if not ss_path:
         return {
             "available": False,
+            "accessible": False,
             "message": "The ss utility could not be found.",
+            "failure_code": SocketCompletenessCode.COMMAND_UNAVAILABLE.value,
             "services": [],
         }
 
     result = _run_command([ss_path, "-lntup"])
 
-    if not result["success"] or result["stderr"]:
+    if not result["success"] or result.get("stderr_present"):
         return {
             "available": True,
             "accessible": False,
             "message": (
                 "CyberWatchtower could not completely inspect listening services."
             ),
-            "error": result["stderr"],
+            "failure_code": result.get("failure_code") or (
+                SocketCompletenessCode.COMMAND_FAILED.value
+            ),
             "services": [],
         }
 
@@ -66,62 +133,44 @@ def inspect_listening_services() -> dict:
 def parse_listening_services(raw_output: str) -> list[dict]:
     """Convert ss output into structured listening-service records."""
 
-    services = []
-
-    lines = raw_output.splitlines()
-
-    # Skip the header
-    for line in lines[1:]:
-        parts = line.split()
-
-        if len(parts) < 5:
-            continue
-
-        protocol = parts[0]
-        state = parts[1]
-        local_address = parts[4]
-
-        process_name = "unknown"
-        pid = None
-
-        process_match = re.search(
-            r'users:\(\("([^"]+)",pid=(\d+)',
-            line,
-        )
-
-        if process_match:
-            process_name = process_match.group(1)
-            pid = int(process_match.group(2))
+    return list(parse_listening_services_checked(raw_output).services)
 
 
+def _parse_service_row(line: str) -> dict | None:
+    parts = line.split()
+    if len(parts) < 6:
+        return None
+    protocol = parts[0].casefold()
+    state = parts[1]
+    local_address = parts[4]
+    if protocol not in {"tcp", "udp"} or ":" not in local_address:
+        return None
+    address, port = local_address.rsplit(":", 1)
+    if not address or not port.isdigit() or not 0 <= int(port) <= 65535:
+        return None
 
-        if ":" in local_address:
-            address, port = local_address.rsplit(":", 1)
-        else:
-            address = local_address
-            port = "unknown"
+    process_name = "unknown"
+    pid = None
+    process_match = re.search(r'users:\(\("([^"]+)",pid=(\d+)', line)
+    if process_match:
+        process_name = process_match.group(1)
+        pid = int(process_match.group(2))
 
-        exposure = "local"
-
-        if address in ("0.0.0.0", "*", "[::]", "::"):
-            exposure = "all_interfaces"
-        elif address.startswith("127.") or address in ("::1", "[::1]"):
-            exposure = "loopback"
-        else:
-            exposure = "interface"
-
-        services.append(
-            {
-                "protocol": protocol,
-                "state": state,
-                "address": address,
-                "port": port,
-                "exposure": exposure,
-                "process": process_name,
-                "pid": pid,
-            }
-        )
-    return services
+    if address in ("0.0.0.0", "*", "[::]", "::"):
+        exposure = "all_interfaces"
+    elif address.startswith("127.") or address in ("::1", "[::1]"):
+        exposure = "loopback"
+    else:
+        exposure = "interface"
+    return {
+        "protocol": protocol,
+        "state": state,
+        "address": address,
+        "port": port,
+        "exposure": exposure,
+        "process": process_name,
+        "pid": pid,
+    }
 
 
 def enrich_process_intelligence(
