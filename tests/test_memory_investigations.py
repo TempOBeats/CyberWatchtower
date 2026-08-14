@@ -425,6 +425,8 @@ class InvestigationMigrationTests(unittest.TestCase):
                     migration.sql,encoding="utf-8")
             Path(root,"0005_broken.sql").write_text(
                 "CREATE TABLE partial_m5(value TEXT);\nNOT SQL;\n",encoding="utf-8")
+            Path(root,"0006_placeholder.sql").write_text(
+                "CREATE TABLE never_reached_m6(value TEXT);\n",encoding="utf-8")
             path = Path(directory,"memory.db")
             with self.assertRaises(MemoryMigrationFailed):
                 open_memory_database(path,migration_directory=root)
