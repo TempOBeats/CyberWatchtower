@@ -4,7 +4,7 @@ from pathlib import Path
 from .provenance import MemoryProvenance
 
 
-CURRENT_MEMORY_SCHEMA_VERSION = 6
+CURRENT_MEMORY_SCHEMA_VERSION = 7
 
 
 @dataclass(frozen=True)

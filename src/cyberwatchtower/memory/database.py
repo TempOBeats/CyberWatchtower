@@ -43,6 +43,7 @@ REQUIRED_TABLES = frozenset({
     "retention_guard",
     "retention_authorizations",
     "retention_executions",
+    "capability_authorizations",
 })
 REQUIRED_INDEXES = frozenset({
     "idx_system_aliases_lookup",
@@ -70,6 +71,8 @@ REQUIRED_INDEXES = frozenset({
     "idx_conversation_references_active",
     "idx_retention_authorizations_plan",
     "idx_retention_executions_time",
+    "idx_reports_content_digest",
+    "idx_capability_authorizations_validation",
 })
 
 

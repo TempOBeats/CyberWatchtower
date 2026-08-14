@@ -46,6 +46,10 @@ class MemoryInvestigationError(MemoryErrorBase):
     pass
 
 
+class MemoryAuthorizationError(MemoryErrorBase):
+    pass
+
+
 class MemoryRetentionError(MemoryErrorBase):
     pass
 

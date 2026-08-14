@@ -28,6 +28,8 @@ REQUIRED_TRIGGERS = frozenset({
     "trg_capability_identity_immutable", "trg_capability_event_no_delete",
     "trg_retention_authorization_immutable", "trg_retention_authorization_no_delete",
     "trg_retention_execution_immutable", "trg_retention_execution_no_delete",
+    "trg_capability_authorization_immutable",
+    "trg_capability_authorization_no_delete",
 })
 
 
