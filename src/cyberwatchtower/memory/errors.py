@@ -36,3 +36,7 @@ class MemoryLifecycleError(MemoryErrorBase):
 
 class MemoryQueryError(MemoryErrorBase):
     pass
+
+
+class MemoryDecisionError(MemoryErrorBase):
+    pass
