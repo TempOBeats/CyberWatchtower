@@ -30,6 +30,16 @@ REQUIRED_TABLES = frozenset({
     "baseline_entries",
     "recommendations_shown",
     "action_responses",
+    "investigations",
+    "investigation_status_events",
+    "investigation_findings",
+    "investigation_scopes",
+    "investigation_evidence",
+    "investigation_questions",
+    "capability_executions",
+    "capability_execution_events",
+    "investigation_recommendations",
+    "conversation_references",
 })
 REQUIRED_INDEXES = frozenset({
     "idx_system_aliases_lookup",
@@ -46,6 +56,15 @@ REQUIRED_INDEXES = frozenset({
     "idx_baseline_entries_order",
     "idx_recommendations_action",
     "idx_action_responses_history",
+    "idx_investigations_open",
+    "idx_investigation_status_time",
+    "idx_investigation_findings_lookup",
+    "idx_investigation_scopes_lookup",
+    "idx_investigation_evidence_time",
+    "idx_investigation_questions_time",
+    "idx_capability_investigation",
+    "idx_capability_event_time",
+    "idx_conversation_references_active",
 })
 
 
