@@ -492,8 +492,8 @@ class RetentionMigrationTests(unittest.TestCase):
                 connection.execute(f"PRAGMA user_version={old_version}")
                 connection.commit(); connection.close()
                 with open_memory_database(path) as database:
-                    self.assertEqual(database.info.schema_version, 6)
-                    self.assertEqual(database.info.migration_count, 6)
+                    self.assertEqual(database.info.schema_version, CURRENT_MEMORY_SCHEMA_VERSION)
+                    self.assertEqual(database.info.migration_count, CURRENT_MEMORY_SCHEMA_VERSION)
 
     def test_migration_six_failure_rolls_back_to_version_five(self):
         migrations = discover_migrations()
@@ -504,6 +504,8 @@ class RetentionMigrationTests(unittest.TestCase):
                     migration.sql, encoding="utf-8")
             Path(root, "0006_broken.sql").write_text(
                 "CREATE TABLE partial_m6(value TEXT);\nNOT SQL;\n", encoding="utf-8")
+            Path(root, "0007_placeholder.sql").write_text(
+                "CREATE TABLE never_reached_m7(value TEXT);\n", encoding="utf-8")
             path = Path(directory, "memory.db")
             from cyberwatchtower.memory.errors import MemoryMigrationFailed
             with self.assertRaises(MemoryMigrationFailed):

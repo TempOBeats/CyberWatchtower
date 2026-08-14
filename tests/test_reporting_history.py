@@ -8,6 +8,12 @@ from unittest.mock import patch
 from cyberwatchtower.history import load_reports
 from cyberwatchtower.models import Finding, Severity
 from cyberwatchtower.reporting import save_json_report
+from cyberwatchtower.report_contracts import (
+    LegacyIdentityResolution,
+    LegacyIdentityState,
+    LegacyLinkPolicy,
+    canonical_report_digest,
+)
 
 
 def _write_report(path: Path, hostname: str, generated_at: str) -> None:
@@ -53,7 +59,7 @@ class ReportHistoryTests(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(reports[0]["system"]["system_id"], "cwt-a")
 
-    def test_legacy_report_uses_hostname_fallback(self):
+    def test_legacy_same_hostname_is_excluded_without_explicit_link(self):
         with tempfile.TemporaryDirectory() as directory:
             report_dir = Path(directory)
             _write_report(
@@ -68,7 +74,57 @@ class ReportHistoryTests(unittest.TestCase):
                 system_id="cwt-current",
             )
 
+        self.assertEqual(reports, [])
+
+    def test_explicit_unambiguous_legacy_link_is_admitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory)
+            path = report_dir / "legacy.json"
+            _write_report(path, "legacy-host", "2026-08-13T12:00:00+00:00")
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            digest = canonical_report_digest(raw)
+            resolution = LegacyIdentityResolution(
+                LegacyIdentityState.HOSTNAME_FALLBACK,
+                "cwt-current",
+                "legacy-host",
+                LegacyLinkPolicy.ALLOW_EXPLICIT_HOSTNAME_FALLBACK,
+                "Explicit same-system legacy association.",
+            )
+            reports = load_reports(
+                report_dir,
+                hostname="legacy-host",
+                system_id="cwt-current",
+                legacy_resolutions={digest: resolution},
+            )
+
         self.assertEqual(len(reports), 1)
+        self.assertNotIn("system_id", reports[0]["system"])
+
+    def test_explicit_legacy_link_is_bound_to_digest_and_system(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory)
+            path = report_dir / "legacy.json"
+            _write_report(path, "legacy-host", "2026-08-13T12:00:00+00:00")
+            digest = canonical_report_digest(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            wrong_system = LegacyIdentityResolution(
+                LegacyIdentityState.HOSTNAME_FALLBACK,
+                "cwt-other",
+                "legacy-host",
+                LegacyLinkPolicy.ALLOW_EXPLICIT_HOSTNAME_FALLBACK,
+                "Explicit link for a different system.",
+            )
+            wrong_digest = load_reports(
+                report_dir, hostname="legacy-host", system_id="cwt-current",
+                legacy_resolutions={"0" * 64: wrong_system},
+            )
+            wrong_target = load_reports(
+                report_dir, hostname="legacy-host", system_id="cwt-current",
+                legacy_resolutions={digest: wrong_system},
+            )
+        self.assertEqual(wrong_digest, [])
+        self.assertEqual(wrong_target, [])
 
     def test_system_id_without_hostname_does_not_admit_legacy_reports(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -9,6 +9,10 @@ from cyberwatchtower.capabilities.registry import (
 from cyberwatchtower.conversation.session import ConversationSession
 from cyberwatchtower.core.grounding import validate_grounding
 from cyberwatchtower.core.orchestrator import IntelligenceOrchestrator, OrchestratorState
+from cyberwatchtower.report_contracts import (
+    LegacyIdentityResolution, LegacyIdentityState, LegacyLinkPolicy,
+    canonical_report_digest,
+)
 
 
 def _reports():
@@ -69,6 +73,15 @@ class OrchestratorConversationTests(unittest.TestCase):
         )
         self.assertEqual(result.state, OrchestratorState.CLARIFICATION_REQUIRED)
 
+    def test_invalid_explicit_finding_id_does_not_fall_through_to_focus(self):
+        session = ConversationSession(focused_finding_id="type=exposed service")
+        result = IntelligenceOrchestrator().handle(
+            "Why is it dangerous?", reports=_reports(), session=session,
+            explicit_finding_id="finding:does-not-exist",
+        )
+        self.assertEqual(result.state, OrchestratorState.CLARIFICATION_REQUIRED)
+        self.assertFalse(result.response.finding_ids)
+
     def test_no_reports_is_safe_deterministic_response(self):
         with tempfile.TemporaryDirectory() as directory:
             result = IntelligenceOrchestrator().handle(
@@ -93,6 +106,41 @@ class OrchestratorConversationTests(unittest.TestCase):
             section for section in result.response.sections if section.section_id == "changes"
         )
         self.assertIn("No previous same-host scan", changes.claims[0].text)
+
+    def test_legacy_same_hostname_does_not_contaminate_stable_briefing(self):
+        _, current = _reports()
+        legacy = {
+            **current,
+            "generated_at": "2026-08-12T12:00:00+00:00",
+            "system": {"hostname": "host"},
+            "security_score": {"score": 10, "risk_level": "CRITICAL", "counts": {}},
+            "findings": [],
+        }
+        result = IntelligenceOrchestrator().handle(
+            "Give me my security briefing", reports=(legacy, current)
+        )
+        self.assertIsNone(result.briefing.advisor_context.previous_score)
+
+    def test_explicit_legacy_resolution_can_join_stable_briefing(self):
+        _, current = _reports()
+        legacy = {
+            **current,
+            "generated_at": "2026-08-12T12:00:00+00:00",
+            "system": {"hostname": "host"},
+            "security_score": {"score": 90, "risk_level": "LOW", "counts": {}},
+            "findings": [],
+        }
+        digest = canonical_report_digest(legacy)
+        resolution = LegacyIdentityResolution(
+            LegacyIdentityState.HOSTNAME_FALLBACK, "cwt-test", "host",
+            LegacyLinkPolicy.ALLOW_EXPLICIT_HOSTNAME_FALLBACK,
+            "Explicit unambiguous legacy link.",
+        )
+        result = IntelligenceOrchestrator().handle(
+            "Give me my security briefing", reports=(legacy, current),
+            legacy_resolutions={digest: resolution},
+        )
+        self.assertEqual(result.briefing.advisor_context.previous_score, 90)
 
     def test_gateway_failure_falls_back_to_deterministic_intent_selection(self):
         class FailingGateway:

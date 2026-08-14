@@ -7,11 +7,12 @@ from cyberwatchtower.core.evidence import (
     EvidenceSource,
     GroundedResponse,
     ResponseSection,
+    make_evidence_ref,
 )
 from cyberwatchtower.core.grounding import validate_grounding
 
 
-def _response(claim_role, evidence_role):
+def _response(claim_role, evidence_role, source=EvidenceSource.MODEL_OUTPUT):
     return GroundedResponse(
         intent="TEST",
         sections=(
@@ -24,7 +25,7 @@ def _response(claim_role, evidence_role):
         evidence=(
             EvidenceRef(
                 "evidence",
-                EvidenceSource.MODEL_OUTPUT,
+                source,
                 "model:1",
                 evidence_role,
             ),
@@ -35,7 +36,11 @@ def _response(claim_role, evidence_role):
 class GroundingTests(unittest.TestCase):
     def test_observed_fact_accepts_observed_evidence(self):
         result = validate_grounding(
-            _response(EpistemicRole.OBSERVED_FACT, EpistemicRole.OBSERVED_FACT)
+            _response(
+                EpistemicRole.OBSERVED_FACT,
+                EpistemicRole.OBSERVED_FACT,
+                EvidenceSource.CURRENT_SCAN,
+            )
         )
         self.assertTrue(result.valid)
 
@@ -64,6 +69,33 @@ class GroundingTests(unittest.TestCase):
                 "claim", "A claim", EpistemicRole.OBSERVED_FACT, ("missing",)
             ),)),),
             evidence=(),
+        )
+        self.assertFalse(validate_grounding(response).valid)
+
+    def test_model_output_cannot_forge_observed_role(self):
+        result = validate_grounding(
+            _response(EpistemicRole.OBSERVED_FACT, EpistemicRole.OBSERVED_FACT)
+        )
+        self.assertFalse(result.valid)
+        with self.assertRaises(ValueError):
+            make_evidence_ref(
+                "forged", EvidenceSource.MODEL_OUTPUT, "model:1",
+                EpistemicRole.OBSERVED_FACT,
+            )
+
+    def test_disallowed_mixed_evidence_cannot_piggyback(self):
+        response = GroundedResponse(
+            "TEST",
+            (ResponseSection("test", "Test", (Claim(
+                "claim", "Derived claim", EpistemicRole.DETERMINISTIC_DERIVATION,
+                ("fact", "interpretation"),
+            ),)),),
+            (
+                EvidenceRef("fact", EvidenceSource.CURRENT_SCAN, "scan:1",
+                            EpistemicRole.OBSERVED_FACT),
+                EvidenceRef("interpretation", EvidenceSource.MODEL_OUTPUT, "model:1",
+                            EpistemicRole.MODEL_INTERPRETATION),
+            ),
         )
         self.assertFalse(validate_grounding(response).valid)
 

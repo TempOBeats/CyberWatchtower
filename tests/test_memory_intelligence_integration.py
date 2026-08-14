@@ -24,7 +24,7 @@ from cyberwatchtower.core.orchestrator import IntelligenceOrchestrator, Orchestr
 from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.memory.context import MemoryContext, build_memory_context
 from cyberwatchtower.memory.decision_models import FindingScope
-from cyberwatchtower.memory.decision_models import BaselineType, ListenerScope
+from cyberwatchtower.memory.decision_models import BaselineEntry, BaselineType, ListenerScope
 from cyberwatchtower.memory.ingestion_models import IngestionStatus
 from cyberwatchtower.memory.errors import (
     MemoryCorrupt, MemoryIncompatibleVersion, MemoryLocked,
@@ -136,11 +136,14 @@ class MemoryIntelligenceIntegrationTests(unittest.TestCase):
             def current_baseline(self, **kwargs):
                 if kwargs["baseline_type"] != BaselineType.APPROVED_LISTENERS:
                     return None
+                scope = ListenerScope(
+                    "tcp", "0.0.0.0", "all interfaces", 8080, "python3"
+                )
                 return SimpleNamespace(
                     baseline_id="baseline:1",
                     system_id="cwt-test",
                     baseline_type=BaselineType.APPROVED_LISTENERS,
-                    entries=(SimpleNamespace(key="listener", value="tcp/8080"),),
+                    entries=(BaselineEntry.for_scope(scope),),
                 )
             def previous_investigation_for_finding(self, **kwargs):
                 return SimpleNamespace(
@@ -172,6 +175,33 @@ class MemoryIntelligenceIntegrationTests(unittest.TestCase):
         self.assertEqual(reports[-1], before)
         self.assertEqual(result.briefing.advisor_context.score, 70)
         self.assertTrue(validate_grounding(result.response).valid)
+
+    def test_listener_baseline_requires_full_typed_scope_match(self):
+        class BaselineMemory(FakeMemory):
+            def current_baseline(self, **kwargs):
+                if kwargs["baseline_type"] != BaselineType.APPROVED_LISTENERS:
+                    return None
+                different = ListenerScope(
+                    "tcp", "127.0.0.1", "loopback", 8080, "python3"
+                )
+                return SimpleNamespace(
+                    baseline_id="baseline:different", system_id="cwt-test",
+                    baseline_type=BaselineType.APPROVED_LISTENERS,
+                    entries=(BaselineEntry.for_scope(different),),
+                )
+
+        reports = _reports()
+        reports[-1]["findings"][0]["evidence"].extend([
+            "Address: 0.0.0.0", "Exposure: all interfaces",
+        ])
+        advisor = build_advisor_context(reports[-1], None, None)
+        context = build_memory_context(
+            BaselineMemory(), system_id="cwt-test",
+            finding_ids=("finding:exposed",), findings=advisor.findings,
+        )
+        self.assertIsNone(context.findings[0].approved_baseline_id)
+        self.assertFalse(any(item.source_id == "baseline:different"
+                             for item in context.evidence))
 
     def test_memory_failure_falls_back_to_json_briefing_without_leaking_details(self):
         result = IntelligenceOrchestrator(memory=FakeMemory(fail=True)).handle(

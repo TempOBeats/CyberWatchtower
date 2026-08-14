@@ -48,6 +48,8 @@ class ReportContractTests(unittest.TestCase):
             set(report["coverage"].values()),
             {CoverageState.UNKNOWN.value},
         )
+        self.assertEqual(report["assessment_assurance"]["level"], "INCOMPLETE")
+        self.assertEqual(len(report["assessment_assurance"]["limitations"]), 3)
 
     def test_coverage_normalization_preserves_valid_states_and_unknowns_invalid(self):
         coverage = normalize_coverage({
