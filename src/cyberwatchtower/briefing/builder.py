@@ -13,6 +13,7 @@ from cyberwatchtower.core.evidence import (
     ResponseSection,
 )
 from cyberwatchtower.core.grounding import require_grounded
+from cyberwatchtower.memory.context import MemoryContext
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ def build_security_briefing(
     current_report: Mapping,
     comparison: Mapping | None,
     intelligence: Mapping | None,
+    memory_context: MemoryContext | None = None,
 ) -> SecurityBriefing:
     """Build one channel-neutral briefing from the trusted deterministic Advisor."""
 
@@ -133,11 +135,67 @@ def build_security_briefing(
         sections.append(ResponseSection("coverage", "Coverage limitations", coverage_claims))
     sections.append(ResponseSection("next", "What should I do next?", tuple(action_claims)))
 
+    if memory_context and memory_context.findings:
+        evidence.extend(memory_context.evidence)
+        history_claims = []
+        decision_claims = []
+        for item in memory_context.findings:
+            history_text = f"{item.finding_id} has appeared in {item.occurrence_count} scan(s)."
+            if item.reopened_count:
+                history_text += (
+                    f" It was previously resolved and has reappeared "
+                    f"{item.reopened_count} time(s)."
+                )
+            history_claims.append(_claim(
+                f"memory:history:{item.finding_id}", history_text,
+                f"memory:lifecycle:{item.finding_id}",
+            ))
+            if item.exception_expires_at:
+                decision_claims.append(Claim(
+                    f"memory:exception-claim:{item.finding_id}",
+                    f"An active presentation exception exists for {item.finding_id} until {item.exception_expires_at}; the finding remains authoritative.",
+                    EpistemicRole.USER_DECISION,
+                    (f"memory:exception:{item.exception_id}",),
+                ))
+            if item.approved_baseline_id:
+                decision_claims.append(Claim(
+                    f"memory:baseline-claim:{item.finding_id}",
+                    f"{item.finding_id} matches an approved baseline entry; this does not suppress the finding.",
+                    EpistemicRole.USER_DECISION,
+                    (f"memory:baseline:{item.approved_baseline_id}",),
+                ))
+            if item.previous_investigation_id:
+                decision_claims.append(Claim(
+                    f"memory:investigation-claim:{item.finding_id}",
+                    f"{item.finding_id} was examined in investigation {item.previous_investigation_id}; completion does not establish remediation.",
+                    EpistemicRole.USER_DECISION,
+                    (f"memory:investigation:{item.previous_investigation_id}",),
+                ))
+        sections.insert(-1, ResponseSection(
+            "memory-history", "Persistent history", tuple(history_claims)
+        ))
+        if decision_claims:
+            sections.insert(-1, ResponseSection(
+                "memory-context", "Approved context", tuple(decision_claims)
+            ))
+        if memory_context.actions:
+            sections.insert(-1, ResponseSection(
+                "memory-actions", "Previous action responses", tuple(
+                    Claim(
+                        f"memory:action-claim:{item.action_id}",
+                        f"Action {item.action_id} was recorded as {item.response_type}; only a deterministic scan can establish remediation.",
+                        EpistemicRole.USER_DECISION,
+                        (f"memory:action-response:{item.response_id}",),
+                    ) for item in memory_context.actions
+                ),
+            ))
+
     response = require_grounded(GroundedResponse(
         intent="SECURITY_BRIEFING",
         sections=tuple(sections),
         evidence=tuple(evidence),
         finding_ids=advisory.important_finding_ids,
         action_ids=tuple(action.action_id for action in advisory.actions[:3]),
+        notice=memory_context.limitation if memory_context else None,
     ))
     return SecurityBriefing(response, context, advisory)
