@@ -44,3 +44,15 @@ class MemoryDecisionError(MemoryErrorBase):
 
 class MemoryInvestigationError(MemoryErrorBase):
     pass
+
+
+class MemoryRetentionError(MemoryErrorBase):
+    pass
+
+
+class MemoryRetentionApprovalError(MemoryRetentionError):
+    pass
+
+
+class MemoryIntegrityDiagnosticError(MemoryErrorBase):
+    pass
