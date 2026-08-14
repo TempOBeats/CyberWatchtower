@@ -14,6 +14,9 @@ def finding_to_dict(finding):
         "evidence": finding.evidence,
         "confidence": finding.confidence,
         "technique_id": finding.technique_id,
+        "source": finding.source,
+        "kind": finding.kind.value,
+        "assessment_state": finding.assessment_state.value,
     }
 
     data["finding_id"] = finding.finding_id or finding_identity(data)

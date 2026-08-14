@@ -9,6 +9,20 @@ class Severity(str, Enum):
     HIGH= "HIGH"
     CRITICAL= "CRITICAL"
 
+
+class FindingKind(str, Enum):
+    RISK = "RISK"
+    COVERAGE_GAP = "COVERAGE_GAP"
+    OBSERVATION = "OBSERVATION"
+
+
+class AssessmentState(str, Enum):
+    CONFIRMED = "CONFIRMED"
+    POTENTIAL = "POTENTIAL"
+    INCOMPLETE = "INCOMPLETE"
+    INFORMATIONAL = "INFORMATIONAL"
+
+
 @dataclass
 class Finding:
     title: str
@@ -19,3 +33,6 @@ class Finding:
     confidence: int = 0
     technique_id: str | None = None
     finding_id: str | None = None
+    source: str = "unknown"
+    kind: FindingKind = FindingKind.RISK
+    assessment_state: AssessmentState = AssessmentState.POTENTIAL

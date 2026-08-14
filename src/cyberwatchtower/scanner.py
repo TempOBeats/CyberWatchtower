@@ -1,4 +1,4 @@
-from .models import Finding, Severity
+from .models import AssessmentState, Finding, FindingKind, Severity
 from .system import collect_system_information
 from .firewall import (
     check_firewall,
@@ -40,6 +40,9 @@ def run_scan() -> dict:
                     recommendation=network_finding["recommendation"],
                     evidence=network_finding["evidence"],
                     confidence=90,
+                    source="network",
+                    kind=FindingKind.RISK,
+                    assessment_state=AssessmentState.CONFIRMED,
                 )
             )
 
@@ -64,6 +67,9 @@ def run_scan() -> dict:
                 ),
                 evidence=evidence,
                 confidence=100,
+                source="network",
+                kind=FindingKind.COVERAGE_GAP,
+                assessment_state=AssessmentState.INCOMPLETE,
             )
         )
 
@@ -86,6 +92,9 @@ def run_scan() -> dict:
                     "No supported firewall tools were detected."
                 ],
                 confidence=70,
+                source="firewall",
+                kind=FindingKind.RISK,
+                assessment_state=AssessmentState.POTENTIAL,
             )
         )
 
@@ -106,6 +115,9 @@ def run_scan() -> dict:
                     f"Detected tools: {', '.join(detected_tools)}"
                 ],
                 confidence=95,
+                source="firewall",
+                kind=FindingKind.OBSERVATION,
+                assessment_state=AssessmentState.INFORMATIONAL,
             )
         )
 
@@ -114,6 +126,16 @@ def run_scan() -> dict:
 
         if iptables_data.get("accessible"):
             assessment = assess_iptables(iptables_data)
+
+            if assessment["status"] == "permissive":
+                finding_kind = FindingKind.RISK
+                assessment_state = AssessmentState.CONFIRMED
+            elif assessment["status"] == "inconclusive":
+                finding_kind = FindingKind.COVERAGE_GAP
+                assessment_state = AssessmentState.INCOMPLETE
+            else:
+                finding_kind = FindingKind.OBSERVATION
+                assessment_state = AssessmentState.INFORMATIONAL
 
             findings.append(
                 Finding(
@@ -129,6 +151,9 @@ def run_scan() -> dict:
                         [],
                     ),
                     confidence=assessment["confidence"],
+                    source="firewall",
+                    kind=finding_kind,
+                    assessment_state=assessment_state,
                 )
             )
 
@@ -150,6 +175,9 @@ def run_scan() -> dict:
                         "Firewall rules were not readable by the current user",
                     ],
                     confidence=100,
+                    source="firewall",
+                    kind=FindingKind.COVERAGE_GAP,
+                    assessment_state=AssessmentState.INCOMPLETE,
                 )
             )
 
