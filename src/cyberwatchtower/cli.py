@@ -86,7 +86,57 @@ def _intelligence_parser() -> argparse.ArgumentParser:
     ask.add_argument("--reports", default="reports")
     ask.add_argument("--memory-db")
     ask.add_argument("--session-id")
+    memory = subparsers.add_parser("memory", help="Read-only memory diagnostics")
+    memory_commands = memory.add_subparsers(dest="memory_command", required=True)
+    status = memory_commands.add_parser("status", help="Show sanitized memory status")
+    status.add_argument("--system-id", required=True)
+    status.add_argument("--memory-db")
+    check = memory_commands.add_parser("check", help="Run read-only integrity checks")
+    check.add_argument("--memory-db")
     return parser
+
+
+def _run_memory_command(parsed) -> None:
+    path = _memory_path(parsed.memory_db)
+    print("CYBERWATCHTOWER MEMORY")
+    print("=====================")
+    if path is None:
+        print("Memory is disabled; deterministic scanning and JSON reports remain available.")
+        return
+    if parsed.memory_command == "check":
+        from .memory.integrity import diagnose_memory_path
+        from .memory.service import SQLiteSecurityMemory
+        try:
+            memory = SQLiteSecurityMemory.open_readonly(path)
+            try:
+                report = memory.integrity_report()
+            finally:
+                memory.close()
+        except Exception:
+            report = diagnose_memory_path(path)
+        print(f"Health: {report.health}")
+        print(f"Schema version: {report.schema_version if report.schema_version is not None else 'unavailable'}")
+        for item in report.diagnostics:
+            print(f"[{item.severity.value}] {item.code}: {item.summary} ({item.count})")
+        return
+    try:
+        from .memory.service import SQLiteSecurityMemory
+        memory = SQLiteSecurityMemory.open_readonly(path)
+        try:
+            status = memory.operational_status(system_id=parsed.system_id)
+        finally:
+            memory.close()
+        print(f"Health: {status.health}")
+        print(f"Schema version: {status.schema_version}")
+        print(f"Latest report: {status.latest_report_at or 'none'}")
+        for label, count in status.safe_counts:
+            print(f"{label.replace('_', ' ').title()}: {count}")
+        print(f"Active exceptions: {status.active_exception_count}")
+        print(f"Pending exceptions: {status.pending_exception_count}")
+        print(f"Expired exceptions: {status.expired_exception_count}")
+        print(f"Retention eligible: {status.retention_eligible_count}")
+    except Exception:
+        print("Memory status is unavailable; preserve the database and run memory check.")
 
 
 def _run_intelligence_command(arguments: list[str]) -> None:
@@ -95,6 +145,9 @@ def _run_intelligence_command(arguments: list[str]) -> None:
     from .core.orchestrator import IntelligenceOrchestrator
 
     parsed = _intelligence_parser().parse_args(arguments)
+    if parsed.command == "memory":
+        _run_memory_command(parsed)
+        return
     request = (
         "Give me my security briefing"
         if parsed.command == "briefing"
@@ -132,7 +185,7 @@ def _run_intelligence_command(arguments: list[str]) -> None:
 
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments and arguments[0] in {"briefing", "ask"}:
+    if arguments and arguments[0] in {"briefing", "ask", "memory"}:
         _run_intelligence_command(arguments)
         return
 

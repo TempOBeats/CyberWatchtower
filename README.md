@@ -69,6 +69,45 @@ of truth. Its automatic allowlist can only load reports, compare saved scans,
 and explain an existing finding. It does not run shell commands, collect fresh
 host data, remediate findings, or contact a model provider.
 
+## Persistent Security Memory
+
+Persistent Security Memory v0.2 is an optional local SQLite index over canonical
+CyberWatchtower JSON reports. Enable it explicitly with `--memory-db PATH` or the
+`CYBERWATCHTOWER_MEMORY_DB` environment variable. The scanner, JSON reporting,
+Advisor, and briefing continue to work when memory is disabled or unavailable.
+
+Memory stores validated report indexes, finding occurrences and lifecycle
+derivations, authoritative stored scores, typed user decisions and expiring
+presentation exceptions, versioned baselines, structured investigation/audit
+records, and short-lived ID-only conversation references. It deliberately does
+not store credentials, tokens, environment variables, raw command lines,
+stdout/stderr, arbitrary logs, raw conversations, or unsupported evidence.
+Canonical JSON reports remain the source records and are never deleted by the
+v0.2 retention system.
+
+Retention is plan-first and bounded. A dry-run identifies exact eligible record
+IDs without changing the database. Deletion requires a separate, unexpired user
+authorization bound to the exact plan and digest, executes transactionally, and
+records a minimal append-only audit. Active exceptions, current decisions,
+approved baselines, deterministic occurrences, scores, and lifecycle history
+are not retention targets. Retention never means that a finding was remediated.
+
+Safe read-only diagnostics are available for an explicitly configured database:
+
+```bash
+.venv/bin/cyberwatchtower memory status --system-id SYSTEM_ID --memory-db PATH
+.venv/bin/cyberwatchtower memory check --memory-db PATH
+```
+
+Diagnostic output excludes database/report paths, raw evidence, raw capability
+parameters/results, machine identity source material, and sensitive text. No
+automatic repair is performed. If corruption is suspected, preserve the
+existing database, make a backup copy before manual intervention, and inspect
+read-only diagnostics. A new memory database may later be rebuilt from canonical
+JSON reports only through an explicit user-directed workflow; v0.2 does not do
+this automatically. Memory never performs remediation or modifies deterministic
+security facts.
+
 ## Development
 
 Run the standard-library test suite without writing bytecode caches:
