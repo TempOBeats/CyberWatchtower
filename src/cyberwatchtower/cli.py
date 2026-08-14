@@ -1,10 +1,52 @@
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from .scanner import run_scan
 from .reporting import save_json_report
 from .history import load_reports, compare_reports
 from cyberwatchtower.intelligence import analyze_history
+
+
+MEMORY_ENVIRONMENT_VARIABLE = "CYBERWATCHTOWER_MEMORY_DB"
+
+
+def _memory_path(explicit: str | None = None) -> Path | None:
+    value = explicit or os.environ.get(MEMORY_ENVIRONMENT_VARIABLE)
+    return Path(value) if value else None
+
+
+def _open_optional_memory(explicit: str | None = None):
+    path = _memory_path(explicit)
+    if path is None:
+        return None, None
+    try:
+        from .memory.service import SQLiteSecurityMemory
+        return SQLiteSecurityMemory.open(path), None
+    except Exception:
+        return None, "Persistent memory is unavailable; deterministic operation continues."
+
+
+def _ingest_saved_report(report_path: Path, explicit: str | None = None) -> str | None:
+    """Best-effort post-save ingestion; never raises into the scan path."""
+
+    memory, notice = _open_optional_memory(explicit)
+    if memory is None:
+        return notice
+    try:
+        from .memory.ingestion_models import IngestionStatus, ReportIngestionRequest
+        result = memory.ingest_report(ReportIngestionRequest(report_path))
+        if result.status not in {IngestionStatus.INGESTED, IngestionStatus.DUPLICATE}:
+            return "Persistent memory could not ingest this report; the saved JSON report remains complete."
+        return None
+    except Exception:
+        return "Persistent memory could not ingest this report; the saved JSON report remains complete."
+    finally:
+        try:
+            memory.close()
+        except Exception:
+            pass
 
 
 def _display_advisor(current_report, comparison, intelligence):
@@ -37,10 +79,13 @@ def _intelligence_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     briefing = subparsers.add_parser("briefing", help="Brief saved scan data")
     briefing.add_argument("--reports", default="reports")
+    briefing.add_argument("--memory-db")
     ask = subparsers.add_parser("ask", help="Ask a supported grounded question")
     ask.add_argument("question")
     ask.add_argument("--finding-id")
     ask.add_argument("--reports", default="reports")
+    ask.add_argument("--memory-db")
+    ask.add_argument("--session-id")
     return parser
 
 
@@ -55,14 +100,21 @@ def _run_intelligence_command(arguments: list[str]) -> None:
         if parsed.command == "briefing"
         else parsed.question
     )
+    memory, memory_notice = _open_optional_memory(parsed.memory_db)
     try:
-        result = IntelligenceOrchestrator().handle(
+        session = ConversationSession()
+        if getattr(parsed, "session_id", None):
+            session.session_id = parsed.session_id
+        result = IntelligenceOrchestrator(memory=memory).handle(
             request,
-            session=ConversationSession(),
+            session=session,
             report_directory=parsed.reports,
             explicit_finding_id=getattr(parsed, "finding_id", None),
         )
-        print(render_grounded_response(result.response))
+        rendered = render_grounded_response(result.response)
+        print(rendered)
+        if memory_notice and "Persistent memory" not in rendered:
+            print(f"\nNotice: {memory_notice}")
     except Exception:
         print("CYBERWATCHTOWER INTELLIGENCE")
         print("============================")
@@ -70,6 +122,12 @@ def _run_intelligence_command(arguments: list[str]) -> None:
             "Intelligence Core unavailable; saved reports and the deterministic "
             "scanner remain unchanged."
         )
+    finally:
+        if memory is not None:
+            try:
+                memory.close()
+            except Exception:
+                pass
 
 
 def main(argv=None):
@@ -85,6 +143,14 @@ def main(argv=None):
     print()
     print("Initializing security assessment...")
     print()
+
+    memory_argument = None
+    if "--memory-db" in arguments:
+        index = arguments.index("--memory-db")
+        if index + 1 >= len(arguments):
+            raise SystemExit("--memory-db requires a path")
+        memory_argument = arguments[index + 1]
+        del arguments[index:index + 2]
 
     results = run_scan()
 
@@ -146,6 +212,10 @@ def main(argv=None):
     print("REPORT")
     print("======")
     print(f"Saved to: {report_path}")
+
+    memory_notice = _ingest_saved_report(report_path, memory_argument)
+    if memory_notice:
+        print(f"Memory notice: {memory_notice}")
 
     if comparison:
         print()
