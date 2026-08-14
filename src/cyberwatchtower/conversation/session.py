@@ -29,8 +29,8 @@ def resolve_finding_reference(
     persisted_candidates: tuple[str, ...] = (),
 ) -> str | None:
     known = {finding.finding_id: finding for finding in context.findings}
-    if explicit_finding_id in known:
-        return explicit_finding_id
+    if explicit_finding_id is not None:
+        return explicit_finding_id if explicit_finding_id in known else None
     for finding_id in known:
         if finding_id in request:
             return finding_id

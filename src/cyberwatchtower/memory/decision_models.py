@@ -258,6 +258,15 @@ class BaselineEntry:
         object.__setattr__(self, "key", safe_text(self.key, "baseline entry key", 128))
         object.__setattr__(self, "value", safe_text(self.value, "baseline entry value", MAX_BASELINE_ENTRY_LENGTH))
 
+    @classmethod
+    def for_scope(cls, scope: TypedScope) -> "BaselineEntry":
+        if not isinstance(scope, TypedScope):
+            raise MemoryDecisionError("baseline scope entry must be typed.")
+        return cls(
+            f"scope:{scope.scope_type.value}:{scope.digest()}",
+            scope.canonical_json(),
+        )
+
 
 @dataclass(frozen=True)
 class BaselineRecord:

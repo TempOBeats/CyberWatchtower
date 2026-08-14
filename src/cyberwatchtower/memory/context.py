@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from cyberwatchtower.core.evidence import EpistemicRole, EvidenceRef, EvidenceSource
+from cyberwatchtower.core.evidence import (
+    EpistemicRole, EvidenceRef, EvidenceSource, make_evidence_ref,
+)
 from cyberwatchtower.advisor.models import AdvisoryFinding
 
 from .decision_models import (
@@ -48,7 +50,7 @@ class MemoryContext:
 
 
 def _memory_evidence(evidence_id, source, source_id, role, label):
-    return EvidenceRef(evidence_id, source, source_id, role, label)
+    return make_evidence_ref(evidence_id, source, source_id, role, label)
 
 
 def build_memory_context(
@@ -116,9 +118,25 @@ def build_memory_context(
                         f"{finding.protocol}/{finding.port}"
                         if finding.protocol and finding.port else None
                     )
-                    if (baseline.baseline_type == BaselineType.APPROVED_LISTENERS
-                            and entry.key == "listener" and entry.value == endpoint):
-                        baseline_by_finding[finding_id] = baseline
+                    if baseline.baseline_type == BaselineType.APPROVED_LISTENERS:
+                        try:
+                            listener_scope = ListenerScope(
+                                finding.protocol,
+                                finding.address,
+                                (finding.exposure or "").casefold(),
+                                int(finding.port),
+                                finding.application or finding.process or "unknown",
+                            )
+                        except (TypeError, ValueError):
+                            listener_scope = None
+                        if listener_scope is not None and (
+                            entry.key == (
+                                f"scope:{listener_scope.scope_type.value}:"
+                                f"{listener_scope.digest()}"
+                            )
+                            and entry.value == listener_scope.canonical_json()
+                        ):
+                            baseline_by_finding[finding_id] = baseline
                     if (baseline.baseline_type == BaselineType.EXPECTED_SERVICES
                             and entry.key == f"service:{finding.application_name}"
                             and entry.value == endpoint):

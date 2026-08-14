@@ -188,12 +188,12 @@ def memory_status(database: MemoryDatabase, *, system_id: str,
 
 def diagnose_memory_path(path: str | Path) -> IntegrityReport:
     """Read-only best-effort diagnostics for a database that may not open normally."""
+    connection = None
     try:
         uri = Path(path).resolve().as_uri() + "?mode=ro"
         connection = sqlite3.connect(uri, uri=True)
         quick = connection.execute("PRAGMA quick_check").fetchone()[0]
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        connection.close()
         if quick == "ok":
             severity, health, code = DiagnosticSeverity.INFO, "READABLE", "SQLITE_READABLE"
         else:
@@ -207,3 +207,6 @@ def diagnose_memory_path(path: str | Path) -> IntegrityReport:
             _diagnostic(DiagnosticSeverity.ERROR, DiagnosticCategory.SQLITE,
                         "DATABASE_UNAVAILABLE", "Memory database is unavailable; preserve it for manual inspection."),
         ))
+    finally:
+        if connection is not None:
+            connection.close()
