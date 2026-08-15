@@ -177,7 +177,7 @@ class ListenerObservation:
         if isinstance(self.port, bool) or not isinstance(self.port, int) or not 0 <= self.port <= 65535:
             raise ValueError("listener port is invalid.")
         if self.pid is not None and (
-            isinstance(self.pid, bool) or not isinstance(self.pid, int) or self.pid <= 0
+            isinstance(self.pid, bool) or not isinstance(self.pid, int) or self.pid < 0
         ):
             raise ValueError("listener pid is invalid.")
         if self.application is not None:

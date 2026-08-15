@@ -102,8 +102,10 @@ class FakeWindowsApi:
         return self._fixture.udp_endpoints
 
     def get_process_image(self, pid: int) -> WindowsApiResult[RawProcessInfo]:
-        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid < 0:
             return WindowsApiResult(failure=WindowsFailureCode.INVALID_RESULT)
+        if pid == 0:
+            return WindowsApiResult(failure=WindowsFailureCode.ACCESS_DENIED)
         for fixture_pid, result in self._fixture.processes:
             if fixture_pid == pid:
                 return result

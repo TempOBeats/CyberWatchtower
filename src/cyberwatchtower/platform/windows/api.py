@@ -24,8 +24,7 @@ class WindowsSystemApiProtocol(Protocol):
 
 
 @runtime_checkable
-class WindowsApiProtocol(WindowsSystemApiProtocol, Protocol):
-
+class WindowsNetworkApiProtocol(Protocol):
     def get_tcp_endpoints(
         self,
     ) -> WindowsApiResult[tuple[RawTcpEndpoint, ...]]: ...
@@ -37,6 +36,12 @@ class WindowsApiProtocol(WindowsSystemApiProtocol, Protocol):
     def get_process_image(self, pid: int) -> WindowsApiResult[RawProcessInfo]: ...
 
     def list_services(self) -> WindowsApiResult[tuple[RawServiceInfo, ...]]: ...
+
+
+@runtime_checkable
+class WindowsApiProtocol(
+    WindowsSystemApiProtocol, WindowsNetworkApiProtocol, Protocol
+):
 
     def get_firewall_profiles(
         self,

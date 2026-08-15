@@ -41,6 +41,12 @@ def _positive_integer(value: object, name: str) -> int:
     return value
 
 
+def _endpoint_pid(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("Windows endpoint PID must be a non-negative integer.")
+    return value
+
+
 class WindowsAddressFamily(str, Enum):
     IPV4 = "IPV4"
     IPV6 = "IPV6"
@@ -137,7 +143,7 @@ class RawTcpEndpoint:
     def __post_init__(self) -> None:
         object.__setattr__(self, "address", _validated_address(self.family, self.address))
         _validated_port(self.port)
-        _positive_integer(self.pid, "Windows endpoint PID")
+        _endpoint_pid(self.pid)
         if not isinstance(self.state, WindowsTcpState):
             raise TypeError("TCP state must use the closed enum.")
 
@@ -152,7 +158,7 @@ class RawUdpEndpoint:
     def __post_init__(self) -> None:
         object.__setattr__(self, "address", _validated_address(self.family, self.address))
         _validated_port(self.port)
-        _positive_integer(self.pid, "Windows endpoint PID")
+        _endpoint_pid(self.pid)
 
 
 @dataclass(frozen=True, slots=True)
