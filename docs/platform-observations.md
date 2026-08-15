@@ -16,6 +16,33 @@ finding identity, scoring, report history, Advisor, Intelligence Core, and
 Persistent Security Memory remain consumers of findings and reports rather than
 platform-specific observations.
 
+## Firewall posture and applicable coverage
+
+The platform-neutral inbound-firewall contract describes technology, the
+`DEFAULT`, `DOMAIN`, `PRIVATE`, or `PUBLIC` profile, profile activity, firewall
+enablement, default inbound `ALLOW`, `BLOCK`, or `UNKNOWN` action, and optional
+block-all-inbound state. These immutable values are observations only. Adapters
+must not assign findings, severity, scores, recommendations, approvals, or model
+evidence.
+
+Report schema 1.2 declares `assessment_domains` explicitly. Assurance is derived
+only from those applicable domains. Reports without this field retain the
+original conservative Linux-era domain set, so schema 1.0 and 1.1 history is not
+reinterpreted. The neutral `firewall_inbound_policy` domain is independent of
+the retained `iptables_input_policy` domain. New neutral firewall-policy finding
+sources map explicitly to the former; legacy Linux firewall sources retain their
+existing coverage mapping.
+
+Linux continues to use its existing iptables observation and deterministic
+interpretation path for exact behavior parity. The Linux adapter also exposes a
+neutral posture translation for the future adapter boundary, but Phase 0 does
+not use that translation to change Linux findings or evidence.
+
+Listener attribution states (`ATTRIBUTED`, `UNAVAILABLE`, `AMBIGUOUS`, and
+`NOT_APPLICABLE`) are deferred until the Windows process/service attribution
+phase. They are not required to represent firewall posture or applicable
+coverage, and adding them here would expand this contract change unnecessarily.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
