@@ -55,14 +55,16 @@ class WindowsRawModelTests(unittest.TestCase):
 
     def test_endpoint_validation_fails_closed(self):
         valid = (WindowsAddressFamily.IPV4, "127.0.0.1", 80, 4)
+        reserved = (WindowsAddressFamily.IPV4, "127.0.0.1", 80, 0)
         invalid = (
             ("IPX", "127.0.0.1", 80, 4),
             (WindowsAddressFamily.IPV4, "::1", 80, 4),
             (WindowsAddressFamily.IPV4, "127.0.0.1", -1, 4),
             (WindowsAddressFamily.IPV4, "127.0.0.1", 65536, 4),
-            (WindowsAddressFamily.IPV4, "127.0.0.1", 80, 0),
+            (WindowsAddressFamily.IPV4, "127.0.0.1", 80, -1),
         )
         RawTcpEndpoint(*valid, WindowsTcpState.LISTEN)
+        RawTcpEndpoint(*reserved, WindowsTcpState.LISTEN)
         for family, address, port, pid in invalid:
             with self.subTest(value=(family, address, port, pid)), self.assertRaises(
                 (TypeError, ValueError)
