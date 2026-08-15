@@ -17,10 +17,14 @@ from .models import (
 
 
 @runtime_checkable
-class WindowsApiProtocol(Protocol):
+class WindowsSystemApiProtocol(Protocol):
     def get_system_info(self) -> WindowsApiResult[RawWindowsSystemInfo]: ...
 
     def get_machine_identity(self) -> WindowsApiResult[RawMachineIdentity]: ...
+
+
+@runtime_checkable
+class WindowsApiProtocol(WindowsSystemApiProtocol, Protocol):
 
     def get_tcp_endpoints(
         self,

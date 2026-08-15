@@ -18,6 +18,7 @@ from .errors import WindowsFailureCode, safe_windows_failure_message
 
 
 MAX_RAW_TEXT = 1024
+MAX_RAW_MACHINE_IDENTITY_TEXT = 256
 _SENSITIVE_MARKERS = (
     "api_key=", "apikey=", "authorization:", "bearer ", "command_line=",
     "credential=", "environment=", "password=", "token=",
@@ -62,10 +63,13 @@ class RawWindowsSystemInfo:
     version: str
     build: str
     architecture: str
+    user_label: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("hostname", "product_name", "version", "build", "architecture"):
             _bounded_text(getattr(self, name), f"Windows system {name}")
+        if self.user_label is not None:
+            _bounded_text(self.user_label, "Windows current user label")
 
 
 class RawMachineIdentity:
@@ -74,7 +78,11 @@ class RawMachineIdentity:
     __slots__ = ("_value", "_sealed")
 
     def __init__(self, value: str) -> None:
-        if not isinstance(value, str) or not value or len(value) > MAX_RAW_TEXT:
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > MAX_RAW_MACHINE_IDENTITY_TEXT
+        ):
             raise ValueError("raw Windows machine identity is outside the supported bound.")
         if any(unicodedata.category(char) in {"Cc", "Cf"} for char in value):
             raise ValueError("raw Windows machine identity contains prohibited controls.")
