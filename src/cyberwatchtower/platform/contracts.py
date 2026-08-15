@@ -4,8 +4,8 @@ from typing import Protocol
 
 from .models import (
     CollectionResult,
+    FirewallInboundPostureObservation,
     FirewallObservation,
-    FirewallPolicyObservation,
     ListenerObservation,
     SystemObservation,
 )
@@ -20,4 +20,6 @@ class PlatformAdapter(Protocol):
 
     def collect_network(self) -> CollectionResult[ListenerObservation]: ...
 
-    def collect_firewall_policy(self) -> CollectionResult[FirewallPolicyObservation]: ...
+    def collect_firewall_inbound_policy(
+        self,
+    ) -> CollectionResult[FirewallInboundPostureObservation]: ...

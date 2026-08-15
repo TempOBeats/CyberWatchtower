@@ -19,12 +19,18 @@ from ..models import (
     CollectionResult,
     FailureCategory,
     FailureCode,
+    FirewallEnablement,
+    FirewallInboundAction,
+    FirewallInboundPostureObservation,
     FirewallObservation,
-    FirewallPolicyObservation,
+    FirewallProfile,
+    FirewallProfileObservation,
+    FirewallProfileState,
     ListenerObservation,
     ObservationDomain,
     SystemObservation,
 )
+from .models import FirewallPolicyObservation
 
 
 _SOCKET_CODES = {
@@ -230,4 +236,43 @@ class LinuxPlatformAdapter:
             ObservationDomain.FIREWALL_INPUT_POLICY,
             CoverageState.COMPLETE,
             (observation,),
+        )
+
+    def collect_firewall_inbound_policy(
+        self,
+    ) -> CollectionResult[FirewallInboundPostureObservation]:
+        """Translate legacy iptables input state into the neutral posture contract.
+
+        The deterministic Linux scanner intentionally continues consuming the
+        legacy policy observation in v0.4 Phase 0 to preserve exact findings and
+        evidence. This method establishes the future cross-platform collection
+        seam without changing that authoritative path.
+        """
+
+        legacy = self.collect_firewall_policy()
+        observations: tuple[FirewallInboundPostureObservation, ...] = ()
+        if legacy.observations:
+            policy = dict(legacy.observations[0].policies).get("INPUT")
+            inbound_action = {
+                "ACCEPT": FirewallInboundAction.ALLOW,
+                "DROP": FirewallInboundAction.BLOCK,
+            }.get(policy, FirewallInboundAction.UNKNOWN)
+            profile = FirewallProfileObservation(
+                FirewallProfile.DEFAULT,
+                (
+                    FirewallProfileState.ACTIVE
+                    if legacy.observations[0].accessible
+                    else FirewallProfileState.UNKNOWN
+                ),
+                FirewallEnablement.UNKNOWN,
+                inbound_action,
+            )
+            observations = (
+                FirewallInboundPostureObservation("iptables", (profile,)),
+            )
+        return CollectionResult(
+            ObservationDomain.FIREWALL_INBOUND_POLICY,
+            legacy.coverage,
+            observations,
+            legacy.failure,
         )

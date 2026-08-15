@@ -36,6 +36,7 @@ class ObservationDomain(str, Enum):
     SYSTEM_INFORMATION = "system_information"
     FIREWALL_TECHNOLOGY = ScanDomain.FIREWALL_TECHNOLOGY.value
     FIREWALL_INPUT_POLICY = ScanDomain.IPTABLES_INPUT_POLICY.value
+    FIREWALL_INBOUND_POLICY = ScanDomain.FIREWALL_INBOUND_POLICY.value
     NETWORK_LISTENERS = ScanDomain.NETWORK_SOCKET_INSPECTION.value
 
 
@@ -264,44 +265,65 @@ class FirewallObservation:
         }
 
 
+class FirewallProfile(str, Enum):
+    DEFAULT = "DEFAULT"
+    DOMAIN = "DOMAIN"
+    PRIVATE = "PRIVATE"
+    PUBLIC = "PUBLIC"
+
+
+class FirewallProfileState(str, Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    UNKNOWN = "UNKNOWN"
+
+
+class FirewallEnablement(str, Enum):
+    ENABLED = "ENABLED"
+    DISABLED = "DISABLED"
+    UNKNOWN = "UNKNOWN"
+
+
+class FirewallInboundAction(str, Enum):
+    ALLOW = "ALLOW"
+    BLOCK = "BLOCK"
+    UNKNOWN = "UNKNOWN"
+
+
 @dataclass(frozen=True)
-class FirewallPolicyObservation:
-    available: bool
-    accessible: bool
-    policies: tuple[tuple[str, str], ...] = ()
-    message: str | None = None
+class FirewallProfileObservation:
+    profile: FirewallProfile
+    state: FirewallProfileState
+    enablement: FirewallEnablement
+    default_inbound_action: FirewallInboundAction
+    block_all_inbound: bool | None = None
 
     def __post_init__(self) -> None:
-        if self.message is not None:
-            _text(self.message, "firewall policy message", MAX_FAILURE_MESSAGE)
-        for chain, policy in self.policies:
-            _text(chain, "firewall chain", 128)
-            _text(policy, "firewall policy", 128)
+        if not isinstance(self.profile, FirewallProfile):
+            raise TypeError("firewall profile must use the closed enum.")
+        if not isinstance(self.state, FirewallProfileState):
+            raise TypeError("firewall profile state must use the closed enum.")
+        if not isinstance(self.enablement, FirewallEnablement):
+            raise TypeError("firewall enablement must use the closed enum.")
+        if not isinstance(self.default_inbound_action, FirewallInboundAction):
+            raise TypeError("inbound action must use the closed enum.")
+        if self.block_all_inbound is not None and not isinstance(
+            self.block_all_inbound, bool
+        ):
+            raise TypeError("block_all_inbound must be boolean or unknown.")
 
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, object]) -> "FirewallPolicyObservation":
-        if not isinstance(value, Mapping):
-            raise TypeError("firewall policy collection must be a mapping.")
-        policies = value.get("policies", {})
-        if not isinstance(policies, Mapping):
-            raise TypeError("firewall policies must be a mapping.")
-        available = value.get("available", False)
-        accessible = value.get("accessible", False)
-        if not isinstance(available, bool) or not isinstance(accessible, bool):
-            raise TypeError("firewall availability fields must be boolean.")
-        return cls(
-            available,
-            accessible,
-            tuple((str(chain), str(policy)) for chain, policy in policies.items()),
-            value.get("message"),
-        )
 
-    def to_assessment_mapping(self) -> dict[str, object]:
-        result: dict[str, object] = {
-            "available": self.available,
-            "accessible": self.accessible,
-            "policies": dict(self.policies),
-        }
-        if self.message is not None:
-            result["message"] = self.message
-        return result
+@dataclass(frozen=True)
+class FirewallInboundPostureObservation:
+    technology_id: str
+    profiles: tuple[FirewallProfileObservation, ...]
+
+    def __post_init__(self) -> None:
+        _text(self.technology_id, "firewall technology identifier", 128)
+        if not isinstance(self.profiles, tuple) or not self.profiles:
+            raise ValueError("firewall posture requires an immutable profile tuple.")
+        if not all(isinstance(item, FirewallProfileObservation) for item in self.profiles):
+            raise TypeError("firewall posture contains an invalid profile.")
+        profile_ids = tuple(item.profile for item in self.profiles)
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ValueError("firewall posture profiles must be unique.")
