@@ -58,9 +58,10 @@ class SocketParseResult:
     message: str
 
 
-_EXPECTED_HEADER_FIELDS = (
-    "netid", "state", "recv-q", "send-q", "local", "address:port",
-    "peer", "address:port",
+_EXPECTED_HEADER = re.compile(
+    r"netid\s+state\s+recv-q\s+send-q\s+local\s+address:port\s+"
+    r"peer\s+address:port\s*process",
+    re.IGNORECASE,
 )
 
 
@@ -74,8 +75,7 @@ def parse_listening_services_checked(raw_output: str) -> SocketParseResult:
     if not lines:
         return SocketParseResult((), False, SocketCompletenessCode.OUTPUT_MALFORMED,
                                  "Socket output did not contain the expected header.")
-    header = tuple(lines[0].casefold().split())
-    if header[:len(_EXPECTED_HEADER_FIELDS)] != _EXPECTED_HEADER_FIELDS:
+    if _EXPECTED_HEADER.fullmatch(lines[0].strip()) is None:
         return SocketParseResult((), False, SocketCompletenessCode.OUTPUT_MALFORMED,
                                  "Socket output did not match the expected structure.")
 

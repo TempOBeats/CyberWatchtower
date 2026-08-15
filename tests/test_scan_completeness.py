@@ -25,6 +25,7 @@ from cyberwatchtower.core.orchestrator import IntelligenceOrchestrator
 from cyberwatchtower.memory import open_memory_database
 from cyberwatchtower.memory.ingestion import ingest_report
 from cyberwatchtower.memory.ingestion_models import ReportIngestionRequest
+from cyberwatchtower.platform.linux import LinuxPlatformAdapter
 
 
 class SocketInspectionTests(unittest.TestCase):
@@ -180,12 +181,71 @@ class FirewallAssessmentTests(unittest.TestCase):
 
 
 class SocketOutputValidationTests(unittest.TestCase):
+    SPACED_HEADER = (
+        "Netid State Recv-Q Send-Q Local Address:Port "
+        "Peer Address:Port Process"
+    )
+    COMPACT_HEADER = (
+        "Netid State  Recv-Q Send-Q Local Address:Port "
+        "Peer Address:PortProcess"
+    )
+
     def test_valid_header_only_output_is_complete_empty_listener_set(self):
-        result = parse_listening_services_checked(
-            "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process"
-        )
+        for header in (self.SPACED_HEADER, self.COMPACT_HEADER):
+            with self.subTest(header=header):
+                result = parse_listening_services_checked(header)
+                self.assertTrue(result.complete)
+                self.assertEqual(result.services, ())
+
+    def test_scoped_ipv6_and_missing_process_attribution_are_valid(self):
+        row = "udp UNCONN 0 0 [fe80::1234]%wlan0:546 [::]:*"
+        result = parse_listening_services_checked(f"{self.COMPACT_HEADER}\n{row}")
+
         self.assertTrue(result.complete)
-        self.assertEqual(result.services, ())
+        self.assertEqual(len(result.services), 1)
+        self.assertEqual(result.services[0], {
+            "protocol": "udp",
+            "state": "UNCONN",
+            "address": "[fe80::1234]%wlan0",
+            "port": "546",
+            "exposure": "interface",
+            "process": "unknown",
+            "pid": None,
+        })
+
+    def test_sanitized_real_world_rows_parse_completely_and_deterministically(self):
+        raw = "\n".join((
+            self.COMPACT_HEADER,
+            'udp UNCONN 0 0 192.0.2.10:5353 0.0.0.0:* '
+            'users:(("fixture-daemon",pid=42,fd=7))',
+            'udp UNCONN 0 0 192.0.2.11:33441 0.0.0.0:* '
+            'users:(("fixture-daemon",pid=42,fd=8))',
+            'udp UNCONN 0 0 [2001:db8::10]%fixture0:42319 [::]:* '
+            'users:(("fixture-daemon",pid=42,fd=9))',
+            'udp UNCONN 0 0 [2001:db8::11]%fixture0:38372 [::]:* '
+            'users:(("fixture-daemon",pid=42,fd=10))',
+            'udp UNCONN 0 0 [2001:db8::12]%fixture0:42976 [::]:* '
+            'users:(("fixture-daemon",pid=42,fd=11))',
+            "udp UNCONN 0 0 [fe80::1234]%fixture0:546 [::]:*",
+        ))
+
+        first = parse_listening_services_checked(raw)
+        second = parse_listening_services_checked(raw)
+
+        self.assertTrue(first.complete)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first.services), 6)
+        self.assertEqual(first.services[0]["process"], "fixture-daemon")
+        self.assertEqual(first.services[0]["pid"], 42)
+        self.assertEqual(first.services[-1]["process"], "unknown")
+        self.assertIsNone(first.services[-1]["pid"])
+
+        collected = LinuxPlatformAdapter(
+            network_collector=lambda: {"accessible": True, "raw_output": raw},
+            process_enricher=lambda services: services,
+        ).collect_network()
+        self.assertEqual(collected.coverage, CoverageState.COMPLETE)
+        self.assertEqual(len(collected.observations), 6)
 
     def test_malformed_truncated_and_partially_parseable_output_fail_closed(self):
         header = "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process"
@@ -195,6 +255,7 @@ class SocketOutputValidationTests(unittest.TestCase):
             f"{header}\ntcp LISTEN 0",
             f"{header}\ntcp LISTEN 0 1 0.0.0.0:22 0.0.0.0:*\ngarbage row",
             f"{header}\nraw unexpected diagnostic",
+            f"{self.COMPACT_HEADER}\nraw unexpected diagnostic",
         )
         for raw in cases:
             with self.subTest(raw=raw):
