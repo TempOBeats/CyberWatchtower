@@ -128,7 +128,9 @@ def build_advisor_context(
 
     score_data = current_report.get("security_score", {})
     counts = score_data.get("counts", {})
-    assurance = assessment_assurance_summary(current_report.get("coverage"))
+    assurance = assessment_assurance_summary(
+        current_report.get("coverage"), current_report.get("assessment_domains")
+    )
 
     return AdvisorContext(
         schema_version="1.0",

@@ -6,6 +6,7 @@ from .finding_identity import finding_identity
 from .report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
     assessment_assurance_summary,
+    normalize_assessment_domains,
     normalize_coverage,
 )
 
@@ -46,13 +47,19 @@ def save_json_report(results, report_directory="reports"):
         f"cyberwatchtower_{safe_hostname}_{timestamp}.json"
     )
 
-    coverage = normalize_coverage(results.get("coverage"))
+    assessment_domains = normalize_assessment_domains(
+        results.get("assessment_domains")
+    )
+    coverage = normalize_coverage(results.get("coverage"), assessment_domains)
     report = {
         "schema_version": CURRENT_REPORT_SCHEMA_VERSION,
         "generated_at": now.isoformat(),
         "system": results["system"],
+        "assessment_domains": [domain.value for domain in assessment_domains],
         "coverage": coverage,
-        "assessment_assurance": assessment_assurance_summary(coverage),
+        "assessment_assurance": assessment_assurance_summary(
+            coverage, assessment_domains
+        ),
         "security_score": results["score"],
         "findings": [
             finding_to_dict(finding)

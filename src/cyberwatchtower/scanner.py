@@ -1,3 +1,5 @@
+from typing import cast
+
 from .models import AssessmentState, Finding, FindingKind, Severity
 from .system import collect_system_information
 from .firewall import (
@@ -13,11 +15,13 @@ from .network import (
 from .scoring import calculate_security_score
 from .report_contracts import (
     CoverageState,
+    LEGACY_ASSESSMENT_DOMAINS,
     ScanDomain,
     assessment_assurance_summary,
 )
 from .platform.contracts import PlatformAdapter
 from .platform.linux import LinuxPlatformAdapter
+from .platform.linux.contracts import LinuxFirewallPolicyAdapter
 from .platform.models import FailureCategory
 from .platform.selection import select_platform_adapter
 
@@ -181,7 +185,11 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
         )
 
     if "iptables" in detected_tools:
-        policy_result = adapter.collect_firewall_policy()
+        # The current deterministic interpretation is explicitly Linux-only.
+        # Platform-neutral adapters expose inbound posture observations, while
+        # this compatibility seam preserves exact legacy iptables evidence.
+        linux_policy_adapter = cast(LinuxFirewallPolicyAdapter, adapter)
+        policy_result = linux_policy_adapter.collect_firewall_policy()
         iptables_data = (
             policy_result.observations[0].to_assessment_mapping()
             if policy_result.observations else {}
@@ -248,12 +256,15 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
             )
 
     score = calculate_security_score(findings)
-    assurance = assessment_assurance_summary(coverage)
+    assurance = assessment_assurance_summary(coverage, LEGACY_ASSESSMENT_DOMAINS)
 
     return {
         "system": system,
         "firewall": firewall,
         "coverage": coverage,
+        "assessment_domains": [
+            domain.value for domain in LEGACY_ASSESSMENT_DOMAINS
+        ],
         "findings": findings,
         "score": score,
         "assessment_assurance": assurance,

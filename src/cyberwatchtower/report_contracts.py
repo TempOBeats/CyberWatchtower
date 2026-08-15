@@ -8,7 +8,8 @@ from enum import Enum
 from typing import Mapping
 
 
-CURRENT_REPORT_SCHEMA_VERSION = "1.1"
+CURRENT_REPORT_SCHEMA_VERSION = "1.2"
+STRUCTURED_FINDING_REPORT_SCHEMA_VERSION = "1.1"
 LEGACY_REPORT_SCHEMA_VERSION = "1.0"
 
 
@@ -27,17 +28,27 @@ class AssessmentAssurance(str, Enum):
 class ScanDomain(str, Enum):
     FIREWALL_TECHNOLOGY = "firewall_technology"
     IPTABLES_INPUT_POLICY = "iptables_input_policy"
+    FIREWALL_INBOUND_POLICY = "firewall_inbound_policy"
     NETWORK_SOCKET_INSPECTION = "network_socket_inspection"
+
+
+LEGACY_ASSESSMENT_DOMAINS: tuple[ScanDomain, ...] = (
+    ScanDomain.FIREWALL_TECHNOLOGY,
+    ScanDomain.IPTABLES_INPUT_POLICY,
+    ScanDomain.NETWORK_SOCKET_INSPECTION,
+)
 
 
 SOURCE_COVERAGE_REQUIREMENTS: dict[str, tuple[ScanDomain, ...]] = {
     "network": (ScanDomain.NETWORK_SOCKET_INSPECTION,),
+    "firewall_technology": (ScanDomain.FIREWALL_TECHNOLOGY,),
     # Current firewall findings share one source value. Requiring both domains
     # is conservative and avoids guessing from finding titles.
     "firewall": (
         ScanDomain.FIREWALL_TECHNOLOGY,
         ScanDomain.IPTABLES_INPUT_POLICY,
     ),
+    "firewall_inbound_policy": (ScanDomain.FIREWALL_INBOUND_POLICY,),
 }
 
 
@@ -47,6 +58,9 @@ COVERAGE_LIMITATION_MESSAGES: dict[ScanDomain, str] = {
     ),
     ScanDomain.IPTABLES_INPUT_POLICY: (
         "iptables INPUT policy was not completely assessed"
+    ),
+    ScanDomain.FIREWALL_INBOUND_POLICY: (
+        "inbound firewall policy was not completely assessed"
     ),
     ScanDomain.NETWORK_SOCKET_INSPECTION: (
         "listening-service inspection was not completely assessed"
@@ -108,12 +122,42 @@ def report_schema_version(report: Mapping) -> str:
     return str(value) if value else LEGACY_REPORT_SCHEMA_VERSION
 
 
-def normalize_coverage(coverage: Mapping | None) -> dict[str, str]:
-    """Return every known scan domain, conservatively defaulting to UNKNOWN."""
+def normalize_assessment_domains(
+    domains: object | None,
+) -> tuple[ScanDomain, ...]:
+    """Validate applicable domains, retaining the legacy set when omitted."""
+
+    if domains is None:
+        return LEGACY_ASSESSMENT_DOMAINS
+    if not isinstance(domains, (list, tuple)) or not domains:
+        raise TypeError("assessment_domains must be a non-empty list.")
+    try:
+        normalized = tuple(
+            item if isinstance(item, ScanDomain) else ScanDomain(item)
+            for item in domains
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("assessment_domains contains an unknown domain.") from exc
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("assessment_domains cannot contain duplicates.")
+    return normalized
+
+
+def report_assessment_domains(report: Mapping) -> tuple[ScanDomain, ...]:
+    """Return explicitly applicable domains or conservative legacy semantics."""
+
+    return normalize_assessment_domains(report.get("assessment_domains"))
+
+
+def normalize_coverage(
+    coverage: Mapping | None,
+    assessment_domains: object | None = None,
+) -> dict[str, str]:
+    """Normalize applicable domains, conservatively defaulting states to UNKNOWN."""
 
     coverage = coverage if isinstance(coverage, Mapping) else {}
     normalized = {}
-    for domain in ScanDomain:
+    for domain in normalize_assessment_domains(assessment_domains):
         try:
             state = CoverageState(coverage.get(domain.value, CoverageState.UNKNOWN))
         except (TypeError, ValueError):
@@ -122,23 +166,37 @@ def normalize_coverage(coverage: Mapping | None) -> dict[str, str]:
     return normalized
 
 
-def coverage_complete_for_source(source: object, coverage: Mapping | None) -> bool:
+def coverage_complete_for_source(
+    source: object,
+    coverage: Mapping | None,
+    assessment_domains: object | None = None,
+) -> bool:
     """Return whether structured coverage can prove a source-domain absence."""
 
     requirements = SOURCE_COVERAGE_REQUIREMENTS.get(str(source).casefold())
     if not requirements:
         return False
-    normalized = normalize_coverage(coverage)
+    try:
+        applicable = normalize_assessment_domains(assessment_domains)
+    except (TypeError, ValueError):
+        return False
+    if not set(requirements).issubset(applicable):
+        return False
+    normalized = normalize_coverage(coverage, applicable)
     return all(
         normalized[domain.value] == CoverageState.COMPLETE.value
         for domain in requirements
     )
 
 
-def assessment_assurance_summary(coverage: Mapping | None) -> dict[str, object]:
+def assessment_assurance_summary(
+    coverage: Mapping | None,
+    assessment_domains: object | None = None,
+) -> dict[str, object]:
     """Derive assurance separately from the deterministic severity score."""
 
-    normalized = normalize_coverage(coverage)
+    applicable = normalize_assessment_domains(assessment_domains)
+    normalized = normalize_coverage(coverage, applicable)
     complete_count = sum(
         state == CoverageState.COMPLETE.value for state in normalized.values()
     )
@@ -150,7 +208,7 @@ def assessment_assurance_summary(coverage: Mapping | None) -> dict[str, object]:
         level = AssessmentAssurance.PARTIAL
     limitations = tuple(
         COVERAGE_LIMITATION_MESSAGES[domain]
-        for domain in ScanDomain
+        for domain in applicable
         if normalized[domain.value] != CoverageState.COMPLETE.value
     )
     return {"level": level.value, "limitations": limitations}
