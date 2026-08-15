@@ -119,6 +119,37 @@ class MemoryLifecycleTests(MemoryTestSupport, unittest.TestCase):
         self.ingest(complete)
         self.assertEqual(self.timeline().summary.lifecycle_state, "RESOLVED")
 
+    def test_neutral_firewall_source_uses_explicit_inbound_domain(self):
+        inbound = finding(source="firewall_inbound_policy")
+        first = report(
+            "system-a", "2026-08-01T00:00:00+00:00", findings=[inbound]
+        )
+        first.update({
+            "schema_version": "1.2",
+            "assessment_domains": ["firewall_inbound_policy"],
+            "coverage": {"firewall_inbound_policy": "COMPLETE"},
+        })
+        self.ingest(first)
+        for index, coverage in enumerate(("INCOMPLETE", "UNKNOWN"), start=2):
+            missing = report("system-a", f"2026-08-0{index}T00:00:00+00:00")
+            missing.update({
+                "schema_version": "1.2",
+                "assessment_domains": ["firewall_inbound_policy"],
+                "coverage": {"firewall_inbound_policy": coverage},
+            })
+            self.ingest(missing)
+            self.assertEqual(
+                self.timeline().summary.lifecycle_state, "RESOLUTION_UNCERTAIN"
+            )
+        complete = report("system-a", "2026-08-04T00:00:00+00:00")
+        complete.update({
+            "schema_version": "1.2",
+            "assessment_domains": ["firewall_inbound_policy"],
+            "coverage": {"firewall_inbound_policy": "COMPLETE"},
+        })
+        self.ingest(complete)
+        self.assertEqual(self.timeline().summary.lifecycle_state, "RESOLVED")
+
     def test_attribute_change_events_preserve_values_and_legacy_uncertainty(self):
         self.ingest(report("system-a", "2026-08-01T00:00:00+00:00", findings=[finding()]))
         changed = finding(severity="HIGH", kind="COVERAGE_GAP", assessment_state="INCOMPLETE")

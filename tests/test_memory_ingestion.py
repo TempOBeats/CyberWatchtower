@@ -414,6 +414,40 @@ class ReportIngestionTests(unittest.TestCase):
         self.assertEqual(current_result.status, IngestionStatus.INGESTED)
         self.assertEqual(legacy_result.status, IngestionStatus.INGESTED)
 
+    def test_schema_12_applicability_is_validated_and_ingested(self):
+        current = _current_report()
+        current["schema_version"] = "1.2"
+        current["assessment_domains"] = [
+            "firewall_technology", "firewall_inbound_policy",
+            "network_socket_inspection",
+        ]
+        current["coverage"].pop("iptables_input_policy")
+        current["coverage"]["firewall_inbound_policy"] = "UNKNOWN"
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write(directory, "current.json", current)
+            with open_memory_database(Path(directory, "memory.db")) as database:
+                result = ingest_report(database, ReportIngestionRequest(path))
+                stored = database.connection.execute(
+                    "SELECT coverage_json FROM reports WHERE report_id = ?",
+                    (result.report_id,),
+                ).fetchone()[0]
+        self.assertEqual(result.status, IngestionStatus.INGESTED)
+        self.assertEqual(result.schema_version, "1.2")
+        self.assertEqual(set(json.loads(stored)), set(current["assessment_domains"]))
+
+    def test_schema_12_unknown_or_malformed_applicability_is_rejected(self):
+        for domains in (["unknown"], [], "firewall_technology"):
+            with self.subTest(domains=domains), tempfile.TemporaryDirectory() as directory:
+                current = _current_report()
+                current["schema_version"] = "1.2"
+                current["assessment_domains"] = domains
+                path = _write(directory, "bad.json", current)
+                with open_memory_database(Path(directory, "memory.db")) as database:
+                    result = ingest_report(database, ReportIngestionRequest(path))
+                    count = database.connection.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+                self.assertEqual(result.status, IngestionStatus.INVALID)
+                self.assertEqual(count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

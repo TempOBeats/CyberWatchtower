@@ -13,7 +13,9 @@ from cyberwatchtower.report_contracts import (
     LegacyIdentityState,
     LegacyLinkPolicy,
     ScanDomain,
+    assessment_assurance_summary,
     canonical_report_digest,
+    report_assessment_domains,
     normalize_coverage,
     report_schema_version,
 )
@@ -45,11 +47,73 @@ class ReportContractTests(unittest.TestCase):
             report = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(report["schema_version"], CURRENT_REPORT_SCHEMA_VERSION)
         self.assertEqual(
+            report["assessment_domains"],
+            [
+                "firewall_technology",
+                "iptables_input_policy",
+                "network_socket_inspection",
+            ],
+        )
+        self.assertEqual(
             set(report["coverage"].values()),
             {CoverageState.UNKNOWN.value},
         )
         self.assertEqual(report["assessment_assurance"]["level"], "INCOMPLETE")
         self.assertEqual(len(report["assessment_assurance"]["limitations"]), 3)
+
+    def test_schema_11_without_applicability_keeps_legacy_domains(self):
+        report = {"schema_version": "1.1"}
+        self.assertEqual(
+            tuple(domain.value for domain in report_assessment_domains(report)),
+            (
+                "firewall_technology",
+                "iptables_input_policy",
+                "network_socket_inspection",
+            ),
+        )
+
+    def test_assurance_uses_only_explicitly_applicable_domains(self):
+        coverage = {
+            ScanDomain.FIREWALL_TECHNOLOGY.value: "COMPLETE",
+            ScanDomain.FIREWALL_INBOUND_POLICY.value: "COMPLETE",
+            ScanDomain.IPTABLES_INPUT_POLICY.value: "UNKNOWN",
+        }
+        assurance = assessment_assurance_summary(
+            coverage,
+            (
+                ScanDomain.FIREWALL_TECHNOLOGY,
+                ScanDomain.FIREWALL_INBOUND_POLICY,
+            ),
+        )
+        self.assertEqual(assurance, {"level": "COMPLETE", "limitations": ()})
+
+    def test_applicable_domain_with_missing_coverage_becomes_unknown(self):
+        coverage = normalize_coverage(
+            {ScanDomain.FIREWALL_TECHNOLOGY.value: "COMPLETE"},
+            (
+                ScanDomain.FIREWALL_TECHNOLOGY,
+                ScanDomain.FIREWALL_INBOUND_POLICY,
+            ),
+        )
+        self.assertEqual(coverage, {
+            "firewall_technology": "COMPLETE",
+            "firewall_inbound_policy": "UNKNOWN",
+        })
+        self.assertEqual(
+            assessment_assurance_summary(
+                coverage,
+                (
+                    ScanDomain.FIREWALL_TECHNOLOGY,
+                    ScanDomain.FIREWALL_INBOUND_POLICY,
+                ),
+            )["level"],
+            "PARTIAL",
+        )
+
+    def test_invalid_applicability_fails_closed(self):
+        for value in ([], ["unknown_domain"], ["firewall_technology"] * 2, "network"):
+            with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
+                report_assessment_domains({"schema_version": "1.2", "assessment_domains": value})
 
     def test_coverage_normalization_preserves_valid_states_and_unknowns_invalid(self):
         coverage = normalize_coverage({

@@ -50,6 +50,30 @@ class HistoryComparisonTests(unittest.TestCase):
         self.assertFalse(uncertain["resolved_findings"])
         self.assertTrue(uncertain["uncertain_findings"])
         self.assertNotIn("reopened_findings", reappeared)
+
+    def test_platform_firewall_source_uses_only_inbound_policy_coverage(self):
+        finding = {
+            "title": "Inbound firewall policy is permissive",
+            "severity": "MEDIUM",
+            "source": "firewall_inbound_policy",
+            "evidence": [],
+        }
+        previous = {"security_score": {"score": 90}, "findings": [finding]}
+        base = {
+            "schema_version": "1.2",
+            "assessment_domains": ["firewall_inbound_policy"],
+            "security_score": {"score": 100},
+            "findings": [],
+        }
+        for state, resolved in (("COMPLETE", True), ("INCOMPLETE", False), ("UNKNOWN", False)):
+            with self.subTest(state=state):
+                current = {**base, "coverage": {
+                    "firewall_inbound_policy": state,
+                    "iptables_input_policy": "COMPLETE",
+                }}
+                comparison = compare_reports(previous, current)
+                self.assertEqual(bool(comparison["resolved_findings"]), resolved)
+                self.assertEqual(bool(comparison["uncertain_findings"]), not resolved)
     def test_distinct_unknown_services_are_not_collapsed_by_title(self):
         previous = {
             "security_score": {"score": 90},

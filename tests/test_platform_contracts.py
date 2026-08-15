@@ -16,8 +16,14 @@ from cyberwatchtower.platform import (
     CollectionResult,
     FailureCategory,
     FailureCode,
+    FirewallEnablement,
+    FirewallInboundAction,
+    FirewallInboundPostureObservation,
     ListenerObservation,
     ObservationDomain,
+    FirewallProfile,
+    FirewallProfileObservation,
+    FirewallProfileState,
     UnsupportedPlatformError,
     select_platform_adapter,
 )
@@ -78,6 +84,23 @@ def authoritative(result):
 
 
 class ObservationContractTests(unittest.TestCase):
+    def test_firewall_posture_is_closed_immutable_and_observation_only(self):
+        profile = FirewallProfileObservation(
+            FirewallProfile.DEFAULT,
+            FirewallProfileState.ACTIVE,
+            FirewallEnablement.ENABLED,
+            FirewallInboundAction.BLOCK,
+            block_all_inbound=False,
+        )
+        posture = FirewallInboundPostureObservation("iptables", (profile,))
+        self.assertEqual(posture.technology_id, "iptables")
+        self.assertFalse(hasattr(posture, "severity"))
+        self.assertFalse(hasattr(posture, "score"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            profile.block_all_inbound = True
+        with self.assertRaises(ValueError):
+            FirewallInboundPostureObservation("iptables", (profile, profile))
+
     def test_observations_are_immutable_closed_and_bounded(self):
         observation = ListenerObservation.from_mapping({
             "protocol": "tcp", "state": "LISTEN", "address": "127.0.0.1",
@@ -268,6 +291,26 @@ class LinuxAdapterContractTests(unittest.TestCase):
                 )
                 self.assertEqual(result["score"]["score"], score)
                 self.assertNotIn("SECRET-CANARY", repr(result))
+
+    def test_neutral_inbound_posture_is_independent_of_legacy_domain(self):
+        firewall = {
+            "detected_tools": ["iptables"],
+            "tool_paths": {"iptables": "/usr/sbin/iptables"},
+        }
+        linux = adapter(
+            firewall=firewall,
+            policy={"available": True, "accessible": True,
+                    "policies": {"INPUT": "DROP"}},
+        )
+        neutral = linux.collect_firewall_inbound_policy()
+        legacy = linux.collect_firewall_policy()
+        self.assertEqual(neutral.domain, ObservationDomain.FIREWALL_INBOUND_POLICY)
+        self.assertEqual(legacy.domain, ObservationDomain.FIREWALL_INPUT_POLICY)
+        self.assertEqual(neutral.coverage, legacy.coverage)
+        self.assertEqual(
+            neutral.observations[0].profiles[0].default_inbound_action,
+            FirewallInboundAction.BLOCK,
+        )
 
     def test_malformed_partial_and_failed_socket_fixtures_fail_closed(self):
         partial = f"{HEADER}\n{EXPOSED}\nunexpected row"
