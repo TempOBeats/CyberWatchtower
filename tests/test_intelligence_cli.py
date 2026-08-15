@@ -19,6 +19,26 @@ def _write_report(directory: str) -> None:
 
 
 class IntelligenceCliTests(unittest.TestCase):
+    def test_help_has_no_scan_report_memory_or_collector_side_effects(self):
+        for flag in ("--help", "-h"):
+            with self.subTest(flag=flag):
+                output = io.StringIO()
+                with (
+                    patch("cyberwatchtower.cli.run_scan") as run_scan,
+                    patch("cyberwatchtower.cli.save_json_report") as save_report,
+                    patch("cyberwatchtower.cli._open_optional_memory") as open_memory,
+                    patch("cyberwatchtower.scanner.select_platform_adapter") as collector,
+                    redirect_stdout(output),
+                ):
+                    result = main([flag])
+
+                self.assertIsNone(result)
+                self.assertIn("usage:", output.getvalue())
+                run_scan.assert_not_called()
+                save_report.assert_not_called()
+                open_memory.assert_not_called()
+                collector.assert_not_called()
+
     def test_briefing_reads_saved_reports_without_running_scan(self):
         with tempfile.TemporaryDirectory() as directory:
             _write_report(directory)

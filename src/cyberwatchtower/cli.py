@@ -96,6 +96,28 @@ def _intelligence_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_top_level_help() -> None:
+    parser = argparse.ArgumentParser(
+        prog="cyberwatchtower",
+        description=(
+            "Run a deterministic local security assessment, or use a saved-data "
+            "intelligence command."
+        ),
+    )
+    parser.add_argument(
+        "--memory-db",
+        metavar="PATH",
+        help="optionally ingest a completed scan into Persistent Security Memory",
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("briefing", "ask", "memory"),
+        help="read-only command over already saved CyberWatchtower data",
+    )
+    parser.print_help()
+
+
 def _run_memory_command(parsed) -> None:
     path = _memory_path(parsed.memory_db)
     print("CYBERWATCHTOWER MEMORY")
@@ -185,6 +207,9 @@ def _run_intelligence_command(arguments: list[str]) -> None:
 
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments in (["-h"], ["--help"]):
+        _print_top_level_help()
+        return
     if arguments and arguments[0] in {"briefing", "ask", "memory"}:
         _run_intelligence_command(arguments)
         return
