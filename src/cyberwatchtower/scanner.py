@@ -7,10 +7,8 @@ from .firewall import (
 )
 from .network import (
     inspect_listening_services,
-    parse_listening_services_checked,
     enrich_process_intelligence,
     assess_network_exposure,
-    classify_service_risk,
 )
 from .scoring import calculate_security_score
 from .report_contracts import (
@@ -18,30 +16,56 @@ from .report_contracts import (
     ScanDomain,
     assessment_assurance_summary,
 )
+from .platform.contracts import PlatformAdapter
+from .platform.linux import LinuxPlatformAdapter
+from .platform.models import FailureCategory
+from .platform.selection import select_platform_adapter
 
 
-def run_scan() -> dict:
-    system = collect_system_information()
-    firewall = check_firewall()
+def _default_platform_adapter() -> PlatformAdapter:
+    """Build the Linux adapter from existing seams to preserve patch compatibility."""
+
+    return select_platform_adapter(linux_adapter=LinuxPlatformAdapter(
+        system_collector=collect_system_information,
+        firewall_collector=check_firewall,
+        network_collector=inspect_listening_services,
+        firewall_policy_collector=inspect_iptables,
+        process_enricher=enrich_process_intelligence,
+    ))
+
+
+def run_scan(adapter: PlatformAdapter | None = None) -> dict:
+    adapter = adapter or _default_platform_adapter()
+    system_result = adapter.collect_system()
+    system = (
+        system_result.observations[0].to_mapping()
+        if system_result.observations else {}
+    )
+    firewall_result = adapter.collect_firewall()
+    firewall = (
+        firewall_result.observations[0].to_mapping()
+        if firewall_result.observations else {"detected_tools": [], "tool_paths": {}}
+    )
 
     findings = []
     coverage = {
-        ScanDomain.FIREWALL_TECHNOLOGY.value: CoverageState.COMPLETE.value,
+        ScanDomain.FIREWALL_TECHNOLOGY.value: firewall_result.coverage.value,
         ScanDomain.IPTABLES_INPUT_POLICY.value: CoverageState.UNKNOWN.value,
         ScanDomain.NETWORK_SOCKET_INSPECTION.value: CoverageState.UNKNOWN.value,
     }
 
-    network = inspect_listening_services()
+    network_result = adapter.collect_network()
+    coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = network_result.coverage.value
+    services = [item.to_service_mapping() for item in network_result.observations]
 
-    if network.get("accessible"):
-        parsed_sockets = parse_listening_services_checked(network.get("raw_output", ""))
-        coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = (
-            CoverageState.COMPLETE.value
-            if parsed_sockets.complete else CoverageState.INCOMPLETE.value
-        )
-        services = list(parsed_sockets.services)
-        services = enrich_process_intelligence(services)
-
+    if (
+        services
+        or network_result.coverage == CoverageState.COMPLETE
+        or network_result.failure.category in {
+            FailureCategory.MALFORMED_OUTPUT,
+            FailureCategory.PARTIAL,
+        }
+    ):
         network_findings = assess_network_exposure(services)
 
         for network_finding in network_findings:
@@ -59,7 +83,8 @@ def run_scan() -> dict:
                 )
             )
 
-        if not parsed_sockets.complete:
+        if network_result.coverage != CoverageState.COMPLETE:
+            failure = network_result.failure
             findings.append(
                 Finding(
                     title="Listening-service inspection incomplete",
@@ -72,8 +97,8 @@ def run_scan() -> dict:
                         "Verify the local ss utility and repeat the assessment."
                     ),
                     evidence=[
-                        f"Failure code: {parsed_sockets.code.value}",
-                        parsed_sockets.message,
+                        f"Failure code: {failure.code.value}",
+                        failure.message,
                     ],
                     confidence=100,
                     source="network",
@@ -83,10 +108,9 @@ def run_scan() -> dict:
             )
 
     else:
-        coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = CoverageState.INCOMPLETE.value
-        evidence = [network.get("message", "Socket inspection was incomplete.")]
-        failure_code = network.get("failure_code", "SOCKET_INSPECTION_INCOMPLETE")
-        evidence.append(f"Failure code: {failure_code}")
+        failure = network_result.failure
+        evidence = [failure.message]
+        evidence.append(f"Failure code: {failure.code.value}")
 
         findings.append(
             Finding(
@@ -157,16 +181,16 @@ def run_scan() -> dict:
         )
 
     if "iptables" in detected_tools:
-        iptables_data = inspect_iptables()
+        policy_result = adapter.collect_firewall_policy()
+        iptables_data = (
+            policy_result.observations[0].to_assessment_mapping()
+            if policy_result.observations else {}
+        )
 
         if iptables_data.get("accessible"):
             assessment = assess_iptables(iptables_data)
 
-            coverage[ScanDomain.IPTABLES_INPUT_POLICY.value] = (
-                CoverageState.COMPLETE.value
-                if assessment["status"] in {"permissive", "configured"}
-                else CoverageState.INCOMPLETE.value
-            )
+            coverage[ScanDomain.IPTABLES_INPUT_POLICY.value] = policy_result.coverage.value
 
             if assessment["status"] == "permissive":
                 finding_kind = FindingKind.RISK
@@ -199,13 +223,13 @@ def run_scan() -> dict:
             )
 
         else:
-            coverage[ScanDomain.IPTABLES_INPUT_POLICY.value] = CoverageState.INCOMPLETE.value
+            coverage[ScanDomain.IPTABLES_INPUT_POLICY.value] = policy_result.coverage.value
             findings.append(
                 Finding(
                     title="iptables inspection requires elevated privileges",
-                    description=iptables_data.get(
-                        "message",
-                        "CyberWatchtower could not inspect iptables.",
+                    description=(
+                        iptables_data.get("message")
+                        or policy_result.failure.message
                     ),
                     severity=Severity.INFO,
                     recommendation=(
