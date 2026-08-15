@@ -1,6 +1,7 @@
 """Pure-Python contracts for future Windows-native observation collection."""
 
 from .api import WindowsApiProtocol, WindowsSystemApiProtocol
+from .api_native import NativeWindowsApi
 from .buffer import NativeBufferRead, read_bounded_native_table
 from .errors import WindowsFailureCode
 from .fake import FakeWindowsApi, WindowsApiFixture
@@ -25,6 +26,7 @@ from .models import (
 __all__ = [
     "FakeWindowsApi",
     "NativeBufferRead",
+    "NativeWindowsApi",
     "RawFirewallProfile",
     "RawMachineIdentity",
     "RawProcessInfo",
