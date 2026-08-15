@@ -414,6 +414,28 @@ and broad protocol emulation.
 
 ## Additional intelligence tracks
 
+### Validated Linux hardening backlog
+
+The following future-hardening items come from an authorized real-world Linux
+assessment. They are validated observations, not implemented capabilities, and
+are not blockers for Windows v0.4 Phase 3.
+
+- **Narrow privileged collection.** A non-privileged scan correctly reported
+  incomplete iptables coverage, while running the entire application with
+  `sudo` allowed complete inspection but created root-owned report artifacts.
+  Future work should isolate elevation to the narrow collector that requires it
+  so reporting, memory, Advisor, Intelligence Core, and user-facing artifacts
+  remain in the normal user context. This item does not authorize autonomous
+  elevation or a privileged-helper implementation.
+- **Effective firewall-posture intelligence.** Read-only validation found
+  iptables `INPUT`, `FORWARD`, and `OUTPUT` policies set to `ACCEPT`, with no
+  nftables ruleset present, confirming that the existing MEDIUM permissive-input
+  finding was valid. Future deterministic analysis may consider effective
+  iptables/nftables filtering, listener exposure, and platform-specific firewall
+  semantics rather than relying only on the default INPUT policy. This item does
+  not change current scoring or findings and does not authorize automatic
+  firewall changes.
+
 ### Log analysis
 
 Planned authorized ingestion covers Linux logs, Windows Event Logs, macOS
