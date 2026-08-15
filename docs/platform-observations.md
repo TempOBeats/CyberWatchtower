@@ -65,6 +65,31 @@ messages, or arbitrary buffer data. Platform-specific API loading must occur
 only during an explicit Windows-only implementation path, never at package
 import time.
 
+### Windows system information and identity
+
+The v0.4 Phase 2 system collector normalizes a bounded Windows hostname,
+kernel version/build, native architecture, and optional current-user display
+label into `SystemObservation`. The read-only native facade loads system DLLs
+and the registry only inside explicit calls on Windows. It executes no command,
+requests no elevation, and remains import-safe on other platforms. Full Windows
+scanner selection is still disabled.
+
+Stable identity is read from the local `MachineGuid` registry value under
+`HKLM\SOFTWARE\Microsoft\Cryptography`. The raw value exists only in the
+dedicated redacted internal identity type and is immediately passed to the
+existing CyberWatchtower system-ID derivation. Only the resulting opaque
+`cwt-…` identifier may enter a platform-neutral observation. Failure never
+falls back to hostname, username, hardware fingerprinting, or a generated seed;
+display facts may remain available with `INCOMPLETE` or `UNKNOWN` coverage.
+
+This identity represents a Windows installation rather than hardware. A
+properly generalized clone should receive a distinct identity, while an
+improper clone or VM snapshot may preserve it and collide. Reinstallation may
+produce a new identity; ordinary hardware changes should not. Phase 2 does not
+attempt clone detection. Portable fake-driven coverage is verified on Linux;
+real native calls require separate execution on a Windows host and are not
+claimed as locally validated by this milestone.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
