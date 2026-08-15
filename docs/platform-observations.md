@@ -90,6 +90,39 @@ attempt clone detection. Portable fake-driven coverage is verified on Linux;
 real native calls require separate execution on a Windows host and are not
 claimed as locally validated by this milestone.
 
+### Windows listeners and attribution
+
+The v0.4 Phase 3 boundary reads the IPv4 and IPv6 owner-PID listener tables for
+TCP and the corresponding bound-endpoint tables for UDP through fixed-purpose
+IP Helper API calls. All four tables must validate for `COMPLETE` network
+coverage. A failed family or protocol may preserve already validated endpoint
+observations, but coverage remains `INCOMPLETE` or `UNKNOWN`; process or service
+enrichment failure does not erase an endpoint or falsely reduce endpoint-table
+coverage.
+
+Addresses use canonical IP text. IPv6 link-local scope IDs use the stable
+`address%numeric_scope_id` representation when the native scope is nonzero.
+TCP records represent listeners; UDP records represent bound endpoints and do
+not imply an active session. PID 0 and PID 4 records remain endpoint facts even
+when process lookup is unavailable.
+
+Process enrichment requests only `PROCESS_QUERY_LIMITED_INFORMATION` and keeps
+only the executable basename. Full image paths are transient internal values;
+command lines, environments, tokens, memory, and process privileges are never
+collected. Active Windows services are enumerated with minimal Service Control
+Manager rights. Exactly one service for a PID may add the stable application ID
+`windows-service:<casefolded-service-name>`; multiple services are ambiguous and
+none is selected. Service registration does not make an application trusted or
+known.
+
+Endpoint ownership is authoritative only for the endpoint-table snapshot.
+Later process/service lookup is best-effort enrichment and does not prove
+continuous identity across process exit, PID reuse, or service races. Phase 3
+does not enable full Windows scanner selection and includes no firewall
+collection, command execution, elevation, or durable native diagnostics. Native
+runtime tests remain guarded for Windows; portable contract/fixture tests run on
+other hosts.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
