@@ -8,7 +8,9 @@ from cyberwatchtower.report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
     CoverageState,
     LEGACY_REPORT_SCHEMA_VERSION,
+    STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
     ScanDomain,
+    normalize_assessment_domains,
     normalize_coverage,
     report_schema_version,
 )
@@ -19,6 +21,7 @@ from .sanitization import contains_sensitive_marker, sanitize_evidence
 
 SUPPORTED_REPORT_SCHEMAS = frozenset({
     LEGACY_REPORT_SCHEMA_VERSION,
+    STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
     CURRENT_REPORT_SCHEMA_VERSION,
 })
 SEVERITIES = tuple(item.value for item in Severity)
@@ -158,7 +161,7 @@ def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFi
 
     raw_kind = finding.get("kind")
     raw_assessment = finding.get("assessment_state")
-    if schema_version == CURRENT_REPORT_SCHEMA_VERSION:
+    if schema_version != LEGACY_REPORT_SCHEMA_VERSION:
         if raw_kind not in KINDS:
             raise ReportValidationError(
                 "INVALID_KIND", f"{field}.kind is not recognized.", f"{field}.kind"
@@ -269,8 +272,24 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
         raise ReportValidationError(
             "INVALID_COVERAGE", "coverage must be an object.", "coverage"
         )
+    raw_domains = report.get("assessment_domains")
+    if schema_version == CURRENT_REPORT_SCHEMA_VERSION and raw_domains is None:
+        raise ReportValidationError(
+            "MISSING_ASSESSMENT_DOMAINS",
+            "assessment_domains is required for this report schema.",
+            "assessment_domains",
+        )
+    try:
+        assessment_domains = normalize_assessment_domains(raw_domains)
+    except (TypeError, ValueError) as exc:
+        raise ReportValidationError(
+            "INVALID_ASSESSMENT_DOMAINS",
+            "assessment_domains contains an invalid or duplicate domain.",
+            "assessment_domains",
+        ) from exc
     if raw_coverage is not None:
         known_domains = {domain.value for domain in ScanDomain}
+        applicable = {domain.value for domain in assessment_domains}
         valid_states = {state.value for state in CoverageState}
         if set(raw_coverage) - known_domains or any(
             value not in valid_states for value in raw_coverage.values()
@@ -280,7 +299,15 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
                 "coverage contains an unknown domain or state.",
                 "coverage",
             )
-    coverage = tuple(sorted(normalize_coverage(raw_coverage).items()))
+        if schema_version == CURRENT_REPORT_SCHEMA_VERSION and set(raw_coverage) - applicable:
+            raise ReportValidationError(
+                "INAPPLICABLE_COVERAGE",
+                "coverage contains a domain not declared applicable.",
+                "coverage",
+            )
+    coverage = tuple(sorted(
+        normalize_coverage(raw_coverage, assessment_domains).items()
+    ))
     score = _score(report.get("security_score"), schema_version)
     raw_findings = report.get("findings")
     if not isinstance(raw_findings, list):

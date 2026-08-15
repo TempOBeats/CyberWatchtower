@@ -115,7 +115,9 @@ def compare_reports(previous: dict, current: dict) -> dict:
         identity
         for identity in resolved_identities
         if coverage_complete_for_source(
-            previous_findings[identity].get("source"), current.get("coverage")
+            previous_findings[identity].get("source"),
+            current.get("coverage"),
+            current.get("assessment_domains"),
         )
     }
     uncertain_identities = resolved_identities - confirmed_resolved_identities

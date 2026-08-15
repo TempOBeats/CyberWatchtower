@@ -41,7 +41,12 @@ def _coverage_complete(source: str, coverage_json: str) -> bool:
         raw = json.loads(coverage_json)
     except (TypeError, json.JSONDecodeError):
         return False
-    return coverage_complete_for_source(source, raw if isinstance(raw, dict) else None)
+    coverage = raw if isinstance(raw, dict) else None
+    return coverage_complete_for_source(
+        source,
+        coverage,
+        tuple(coverage) if coverage is not None else None,
+    )
 
 
 def _derive(connection: sqlite3.Connection, system_id: str):
