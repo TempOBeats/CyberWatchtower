@@ -43,6 +43,28 @@ Listener attribution states (`ATTRIBUTED`, `UNAVAILABLE`, `AMBIGUOUS`, and
 phase. They are not required to represent firewall posture or applicable
 coverage, and adding them here would expand this contract change unnecessarily.
 
+## Windows native API boundary
+
+The v0.4 Phase 1 `platform.windows` package is a dependency-free, pure-Python
+contract layer for future Windows collection. Its method-specific protocol
+returns immutable raw system, endpoint, process, service, firewall-profile, and
+local-identity DTOs. These internal values are not platform-neutral
+observations, findings, report data, memory records, or model input. Future
+collectors must validate and normalize them before they can cross the platform
+observation boundary.
+
+The package currently contains no native API loading or host collection. A
+typed fake and bounded two-call table helper allow buffer growth, unstable
+results, access failures, process races, ordering, and privacy behavior to be
+tested on non-Windows hosts. Raw local identity has a redacted dedicated type
+and may be consumed only by the future trusted system-ID derivation boundary.
+
+Future native implementations must remain behind this facade. They may not add
+a generic command runner, caller-supplied script or query text, raw native error
+messages, or arbitrary buffer data. Platform-specific API loading must occur
+only during an explicit Windows-only implementation path, never at package
+import time.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
