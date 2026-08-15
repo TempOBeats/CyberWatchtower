@@ -5,7 +5,15 @@ from __future__ import annotations
 import sys
 
 from .errors import WindowsFailureCode
-from .models import RawMachineIdentity, RawWindowsSystemInfo, WindowsApiResult
+from .models import (
+    RawMachineIdentity,
+    RawProcessInfo,
+    RawServiceInfo,
+    RawTcpEndpoint,
+    RawUdpEndpoint,
+    RawWindowsSystemInfo,
+    WindowsApiResult,
+)
 
 
 _MAX_HOSTNAME_CHARS = 256
@@ -197,3 +205,39 @@ class NativeWindowsApi:
             return WindowsApiResult(failure=code)
         except (TypeError, ValueError):
             return WindowsApiResult(failure=WindowsFailureCode.INVALID_RESULT)
+
+    def get_tcp_endpoints(self) -> WindowsApiResult[tuple[RawTcpEndpoint, ...]]:
+        if sys.platform != "win32":
+            return WindowsApiResult(failure=WindowsFailureCode.UNSUPPORTED)
+        try:
+            from .native_network import collect_tcp_endpoints
+            return collect_tcp_endpoints()
+        except Exception:
+            return WindowsApiResult(failure=WindowsFailureCode.INTERNAL_ERROR)
+
+    def get_udp_endpoints(self) -> WindowsApiResult[tuple[RawUdpEndpoint, ...]]:
+        if sys.platform != "win32":
+            return WindowsApiResult(failure=WindowsFailureCode.UNSUPPORTED)
+        try:
+            from .native_network import collect_udp_endpoints
+            return collect_udp_endpoints()
+        except Exception:
+            return WindowsApiResult(failure=WindowsFailureCode.INTERNAL_ERROR)
+
+    def get_process_image(self, pid: int) -> WindowsApiResult[RawProcessInfo]:
+        if sys.platform != "win32":
+            return WindowsApiResult(failure=WindowsFailureCode.UNSUPPORTED)
+        try:
+            from .native_network import query_process_image
+            return query_process_image(pid)
+        except Exception:
+            return WindowsApiResult(failure=WindowsFailureCode.INTERNAL_ERROR)
+
+    def list_services(self) -> WindowsApiResult[tuple[RawServiceInfo, ...]]:
+        if sys.platform != "win32":
+            return WindowsApiResult(failure=WindowsFailureCode.UNSUPPORTED)
+        try:
+            from .native_network import list_active_services
+            return list_active_services()
+        except Exception:
+            return WindowsApiResult(failure=WindowsFailureCode.INTERNAL_ERROR)
