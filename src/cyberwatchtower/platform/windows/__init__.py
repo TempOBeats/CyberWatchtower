@@ -1,11 +1,12 @@
 """Pure-Python contracts for future Windows-native observation collection."""
 
-from .api import WindowsApiProtocol, WindowsSystemApiProtocol
+from .api import WindowsApiProtocol, WindowsNetworkApiProtocol, WindowsSystemApiProtocol
 from .api_native import NativeWindowsApi
 from .buffer import NativeBufferRead, read_bounded_native_table
 from .errors import WindowsFailureCode
 from .fake import FakeWindowsApi, WindowsApiFixture
 from .system import collect_windows_system
+from .network import collect_windows_network
 from .models import (
     RawFirewallProfile,
     RawMachineIdentity,
@@ -38,6 +39,7 @@ __all__ = [
     "WindowsAddressFamily",
     "WindowsApiFixture",
     "WindowsApiProtocol",
+    "WindowsNetworkApiProtocol",
     "WindowsApiResult",
     "WindowsFailureCode",
     "WindowsFirewallAction",
@@ -48,5 +50,6 @@ __all__ = [
     "WindowsSystemApiProtocol",
     "WindowsTcpState",
     "collect_windows_system",
+    "collect_windows_network",
     "read_bounded_native_table",
 ]
