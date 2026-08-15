@@ -122,5 +122,10 @@ Compile-check the package:
 .venv/bin/python -m compileall -q src/cyberwatchtower
 ```
 
-See `AGENTS.md` for project architecture, development rules, and the current
-roadmap.
+Project documentation:
+
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — product direction, completed milestones,
+  dependencies, and the road to 1.0
+- [`docs/platform-observations.md`](docs/platform-observations.md) — normalized
+  platform observation boundary and future-adapter requirements
+- [`AGENTS.md`](AGENTS.md) — standing engineering, testing, Git, and safety rules

@@ -63,6 +63,17 @@ Important modules currently include:
 - models.py
   Contains Finding and Severity models.
 
+- platform/
+  Defines platform-neutral observation contracts and the Linux adapter.
+
+- advisor/, core/, briefing/, conversation/, model_gateway/
+  Provide deterministic advice, grounded Intelligence Core responses, and the
+  bounded provider-neutral model boundary.
+
+- memory/
+  Provides optional Persistent Security Memory, typed history/context, audit,
+  retention, and integrity services.
+
 ## Features Already Working
 
 Do not unnecessarily rewrite these working features:
@@ -88,36 +99,12 @@ Do not unnecessarily rewrite these working features:
 19. Persistent historical intelligence.
 20. Recurring finding detection and occurrence counting.
 
-## Important Observed Behavior
+## Roadmap and Milestone Status
 
-CyberWatchtower detected Python-based services where `ss` reports the process as python3.
-
-Example:
-
-- process: python3
-- command: /usr/bin/wsdd
-- UDP service exposed on all interfaces
-
-This revealed a future improvement opportunity:
-
-Process Intelligence should inspect command-line information for interpreter-based processes such as:
-
-- python
-- python3
-- bash
-- sh
-- node
-- java
-- ruby
-- perl
-
-Instead of only reporting the interpreter, CyberWatchtower should attempt to identify the actual executed application or script.
-
-Example desired output:
-
-Service: WSDD
-Process: python3
-Application: /usr/bin/wsdd
+Process Intelligence, Persistent Security Memory, trust-boundary hardening, and
+the platform-neutral observation boundary are implemented. Product sequencing
+and milestone status live in `docs/ROADMAP.md`; this file remains the source for
+standing engineering, testing, Git, and safety instructions.
 
 ## Development Rules
 
@@ -172,26 +159,6 @@ Do not implement destructive, unauthorized, persistence, credential-theft, malwa
 
 Network scanning or active testing features should be designed for systems the operator owns or is authorized to test.
 
-## Immediate Development Priority
-
-The next recommended feature is Process Intelligence.
-
-Goal:
-
-When a socket is owned by an interpreter process such as python3, inspect safe local metadata such as /proc/<pid>/cmdline and identify the actual application or script.
-
-Example:
-
-python3 /usr/bin/wsdd
-
-should be represented as:
-
-Process: python3
-Application: /usr/bin/wsdd
-Service/Application: WSDD
-
-This should improve service classification and reduce ambiguous "Unknown service" findings.
-
 ## First Codex Session
 
 Before changing code:
@@ -203,5 +170,5 @@ Before changing code:
 5. Run appropriate non-destructive checks.
 6. Summarize the current architecture.
 7. Identify technical debt or bugs.
-8. Propose the next development plan.
+8. Review `docs/ROADMAP.md` before proposing the next development plan.
 9. Do not modify files until the user approves the plan.
