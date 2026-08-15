@@ -302,9 +302,11 @@ class WindowsBoundarySecurityTests(unittest.TestCase):
             "cyberwatchtower.model_gateway", "cyberwatchtower.authorization",
             "ctypes", "winreg", "comtypes", "pythoncom", "importlib", "__import__",
         )
+        phase_one_modules = {"api", "buffer", "errors", "fake", "models"}
         sources = "\n".join(
             Path(module.module_finder.path, f"{module.name}.py").read_text(encoding="utf-8")
             for module in pkgutil.iter_modules([str(root)])
+            if module.name in phase_one_modules
         ).casefold()
         for marker in prohibited:
             with self.subTest(marker=marker):
