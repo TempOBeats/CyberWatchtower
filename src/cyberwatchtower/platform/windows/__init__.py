@@ -5,6 +5,7 @@ from .api_native import NativeWindowsApi
 from .buffer import NativeBufferRead, read_bounded_native_table
 from .errors import WindowsFailureCode
 from .fake import FakeWindowsApi, WindowsApiFixture
+from .system import collect_windows_system
 from .models import (
     RawFirewallProfile,
     RawMachineIdentity,
@@ -46,5 +47,6 @@ __all__ = [
     "WindowsServiceState",
     "WindowsSystemApiProtocol",
     "WindowsTcpState",
+    "collect_windows_system",
     "read_bounded_native_table",
 ]
