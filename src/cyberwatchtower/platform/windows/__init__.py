@@ -7,6 +7,7 @@ from .api import (
     WindowsSystemApiProtocol,
 )
 from .api_native import NativeWindowsApi
+from .adapter import WindowsPlatformAdapter
 from .buffer import NativeBufferRead, read_bounded_native_table
 from .errors import WindowsFailureCode
 from .fake import FakeWindowsApi, WindowsApiFixture
@@ -49,6 +50,7 @@ __all__ = [
     "WindowsApiFixture",
     "WindowsApiProtocol",
     "WindowsNetworkApiProtocol",
+    "WindowsPlatformAdapter",
     "WindowsApiResult",
     "WindowsFailureCode",
     "WindowsFirewallApiProtocol",
