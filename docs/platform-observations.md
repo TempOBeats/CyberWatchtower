@@ -123,6 +123,40 @@ collection, command execution, elevation, or durable native diagnostics. Native
 runtime tests remain guarded for Windows; portable contract/fixture tests run on
 other hosts.
 
+### Windows Firewall profile posture
+
+The v0.4 Phase 4 boundary uses a dependency-free, fixed-purpose `ctypes`
+binding to the read-only `INetFwPolicy2` COM interface. COM initialization and
+API loading occur only during an explicit Windows call. The boundary has no
+generic dispatch/query surface, invokes no command interpreter, and exposes no
+policy setters or firewall-rule operations. A pywin32 dependency was therefore
+not required for this phase.
+
+The collector retains `DOMAIN`, `PRIVATE`, and `PUBLIC` separately and supports
+multiple simultaneously active profiles. For each profile it normalizes active
+state, firewall enablement, default inbound `ALLOW`, `BLOCK`, or `UNKNOWN`, and
+block-all-inbound `true`, `false`, or unknown. It does not collapse these facts
+into an effective action, finding, severity, score, or recommendation. A
+restrictive profile therefore cannot hide a concurrently active permissive
+profile at the observation boundary.
+
+Firewall-technology coverage is independent from inbound-policy coverage. A
+validated `INetFwPolicy2` interface establishes the supported Windows Firewall
+technology even when a profile property is partial. Inbound-policy coverage is
+`COMPLETE` only when the active profile set is known and every active profile
+has readable enablement and default inbound action. Missing, denied, partial,
+or invalid required facts remain `INCOMPLETE`; an unavailable or unsupported
+interface with no posture is `UNKNOWN`. Block-all-inbound is retained when
+available but is not substituted for the default inbound action.
+
+`INetFwPolicy2` exposes the current policy view, which can reflect settings
+affected by Group Policy. Phase 4 does not enumerate policy layers or claim
+which administrative source supplied a value. It reports only the bounded
+current profile facts returned by that interface. Portable fixtures are
+verified on Linux; the guarded read-only native test remains skipped there, so
+actual Windows runtime behavior is not claimed as locally validated. Full
+Windows adapter/scanner selection remains disabled.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
