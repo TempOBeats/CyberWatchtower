@@ -154,8 +154,37 @@ affected by Group Policy. Phase 4 does not enumerate policy layers or claim
 which administrative source supplied a value. It reports only the bounded
 current profile facts returned by that interface. Portable fixtures are
 verified on Linux; the guarded read-only native test remains skipped there, so
-actual Windows runtime behavior is not claimed as locally validated. Full
-Windows adapter/scanner selection remains disabled.
+actual Windows runtime behavior is not claimed as locally validated.
+
+### Windows adapter and deterministic interpretation
+
+The v0.4 Phase 5 `WindowsPlatformAdapter` assembles the reviewed system,
+endpoint/attribution, and firewall collectors. Deterministic platform selection
+now chooses that adapter on Windows, continues to choose `LinuxPlatformAdapter`
+on Linux, and fails closed on unsupported systems. The adapter produces only
+normalized observations; scanner-owned interpretation creates findings and
+scores.
+
+Windows reports declare `firewall_technology`, `firewall_inbound_policy`, and
+`network_socket_inspection` as their applicable assessment domains. They never
+claim the Linux-only `iptables_input_policy` domain. Inbound policy is evaluated
+per active profile: disabled or default-allow profiles are confirmed medium
+risks, default-block and block-all states are informational, and unknown facts
+remain coverage gaps. Concurrent profiles are never collapsed, so a restrictive
+profile cannot hide a permissive one. Listener exposure continues through the
+shared deterministic network interpreter.
+
+Raw identity, executable paths, native errors, COM objects, buffers, and SCM
+diagnostics do not cross the native boundary into reports, history, memory,
+Advisor, Intelligence Core, or provider data. Schema 1.2 and the existing memory
+schema are sufficient; no migration is required.
+
+The Windows path is **implemented but native validation is pending**. Portable
+fixture integration is covered on Linux, while native system, endpoint,
+firewall, and adapter tests are guarded and skipped there. Windows support is
+therefore experimental/pre-release rather than production-ready. Native CI is
+deferred until a narrowly read-only Windows job can be reviewed without running
+a full security scan of a public runner.
 
 Future adapters must:
 
