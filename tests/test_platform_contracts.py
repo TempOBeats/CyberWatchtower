@@ -28,6 +28,7 @@ from cyberwatchtower.platform import (
     select_platform_adapter,
 )
 from cyberwatchtower.platform.linux import LinuxPlatformAdapter
+from cyberwatchtower.platform.windows import WindowsPlatformAdapter
 from cyberwatchtower.report_contracts import CoverageState
 from cyberwatchtower.reporting import finding_to_dict, save_json_report
 from cyberwatchtower.scanner import run_scan
@@ -167,13 +168,23 @@ class ObservationContractTests(unittest.TestCase):
 
     def test_platform_selection_is_explicit_and_never_falls_back(self):
         linux = adapter()
+        windows = WindowsPlatformAdapter()
         self.assertIs(
             select_platform_adapter(system_name="Linux", linux_adapter=linux), linux
         )
         self.assertIsInstance(
             select_platform_adapter(system_name="Linux"), LinuxPlatformAdapter
         )
-        for unsupported in ("Windows", "Darwin", "Plan9"):
+        self.assertIs(
+            select_platform_adapter(
+                system_name="Windows", windows_adapter=windows
+            ),
+            windows,
+        )
+        self.assertIsInstance(
+            select_platform_adapter(system_name="Windows"), WindowsPlatformAdapter
+        )
+        for unsupported in ("Darwin", "Plan9"):
             with self.subTest(unsupported=unsupported), self.assertRaises(
                 UnsupportedPlatformError
             ):
@@ -194,7 +205,7 @@ class ObservationContractTests(unittest.TestCase):
     def test_scanner_does_not_collect_or_fall_back_on_unsupported_platform(self):
         with (
             patch("cyberwatchtower.platform.selection.platform.system",
-                  return_value="Windows"),
+                  return_value="Darwin"),
             patch("cyberwatchtower.scanner.collect_system_information") as collect,
             self.assertRaises(UnsupportedPlatformError),
         ):
