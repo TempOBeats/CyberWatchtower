@@ -6,6 +6,7 @@ import sys
 
 from .errors import WindowsFailureCode
 from .models import (
+    RawFirewallProfile,
     RawMachineIdentity,
     RawProcessInfo,
     RawServiceInfo,
@@ -239,5 +240,16 @@ class NativeWindowsApi:
         try:
             from .native_network import list_active_services
             return list_active_services()
+        except Exception:
+            return WindowsApiResult(failure=WindowsFailureCode.INTERNAL_ERROR)
+
+    def get_firewall_profiles(
+        self,
+    ) -> WindowsApiResult[tuple[RawFirewallProfile, ...]]:
+        if sys.platform != "win32":
+            return WindowsApiResult(failure=WindowsFailureCode.UNSUPPORTED)
+        try:
+            from .native_firewall import collect_firewall_profiles
+            return collect_firewall_profiles()
         except Exception:
             return WindowsApiResult(failure=WindowsFailureCode.INTERNAL_ERROR)
