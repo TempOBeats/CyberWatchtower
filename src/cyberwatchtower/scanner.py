@@ -23,7 +23,16 @@ from .platform.contracts import PlatformAdapter
 from .platform.linux import LinuxPlatformAdapter
 from .platform.linux.contracts import LinuxFirewallPolicyAdapter
 from .platform.models import FailureCategory
+from .platform.errors import UnsupportedPlatformError
 from .platform.selection import select_platform_adapter
+from .windows_firewall import assess_windows_firewall
+
+
+WINDOWS_ASSESSMENT_DOMAINS = (
+    ScanDomain.FIREWALL_TECHNOLOGY,
+    ScanDomain.FIREWALL_INBOUND_POLICY,
+    ScanDomain.NETWORK_SOCKET_INSPECTION,
+)
 
 
 def _default_platform_adapter() -> PlatformAdapter:
@@ -40,6 +49,15 @@ def _default_platform_adapter() -> PlatformAdapter:
 
 def run_scan(adapter: PlatformAdapter | None = None) -> dict:
     adapter = adapter or _default_platform_adapter()
+    platform_name = adapter.platform_name.casefold()
+    if platform_name == "linux":
+        assessment_domains = LEGACY_ASSESSMENT_DOMAINS
+    elif platform_name == "windows":
+        assessment_domains = WINDOWS_ASSESSMENT_DOMAINS
+    else:
+        raise UnsupportedPlatformError(
+            "CyberWatchtower does not have deterministic interpretation for this platform."
+        )
     system_result = adapter.collect_system()
     system = (
         system_result.observations[0].to_mapping()
@@ -53,10 +71,10 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
 
     findings = []
     coverage = {
-        ScanDomain.FIREWALL_TECHNOLOGY.value: firewall_result.coverage.value,
-        ScanDomain.IPTABLES_INPUT_POLICY.value: CoverageState.UNKNOWN.value,
-        ScanDomain.NETWORK_SOCKET_INSPECTION.value: CoverageState.UNKNOWN.value,
+        domain.value: CoverageState.UNKNOWN.value
+        for domain in assessment_domains
     }
+    coverage[ScanDomain.FIREWALL_TECHNOLOGY.value] = firewall_result.coverage.value
 
     network_result = adapter.collect_network()
     coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = network_result.coverage.value
@@ -99,6 +117,8 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                     severity=Severity.LOW,
                     recommendation=(
                         "Verify the local ss utility and repeat the assessment."
+                        if platform_name == "linux"
+                        else "Repeat Windows endpoint collection and review its coverage."
                     ),
                     evidence=[
                         f"Failure code: {failure.code.value}",
@@ -125,8 +145,13 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                 ),
                 severity=Severity.LOW,
                 recommendation=(
-                    "Verify that the ss utility is available and that the scan "
-                    "has sufficient permission to inspect local sockets."
+                    (
+                        "Verify that the ss utility is available and that the scan "
+                        "has sufficient permission to inspect local sockets."
+                        if platform_name == "linux"
+                        else "Verify that Windows endpoint APIs are available and "
+                        "repeat the assessment."
+                    )
                 ),
                 evidence=evidence,
                 confidence=100,
@@ -138,13 +163,45 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
 
     detected_tools = firewall.get("detected_tools", [])
 
-    if not detected_tools:
+    if (
+        platform_name == "windows"
+        and not detected_tools
+        and firewall_result.coverage != CoverageState.COMPLETE
+    ):
+        findings.append(
+            Finding(
+                title="Windows Firewall technology assessment incomplete",
+                description=(
+                    "CyberWatchtower could not completely determine Windows "
+                    "Firewall technology availability."
+                ),
+                severity=Severity.LOW,
+                recommendation=(
+                    "Repeat the assessment with read access to Windows Firewall policy."
+                ),
+                evidence=[
+                    f"Failure code: {firewall_result.failure.code.value}",
+                    firewall_result.failure.message,
+                ],
+                confidence=100,
+                finding_id=(
+                    "source=firewall_technology|condition=coverage_incomplete"
+                ),
+                source="firewall_technology",
+                kind=FindingKind.COVERAGE_GAP,
+                assessment_state=AssessmentState.INCOMPLETE,
+            )
+        )
+    elif not detected_tools:
         findings.append(
             Finding(
                 title="Firewall technology not detected",
                 description=(
-                    "CyberWatchtower could not detect a supported "
-                    "Linux firewall technology."
+                    "CyberWatchtower could not detect a supported Linux "
+                    "firewall technology."
+                    if platform_name == "linux"
+                    else "CyberWatchtower could not detect supported Windows "
+                    "firewall technology."
                 ),
                 severity=Severity.LOW,
                 recommendation=(
@@ -155,7 +212,10 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                     "No supported firewall tools were detected."
                 ],
                 confidence=70,
-                source="firewall",
+                source=(
+                    "firewall" if platform_name == "linux"
+                    else "firewall_technology"
+                ),
                 kind=FindingKind.RISK,
                 assessment_state=AssessmentState.POTENTIAL,
             )
@@ -166,8 +226,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
             Finding(
                 title="Firewall technology detected",
                 description=(
-                    "CyberWatchtower detected firewall technology "
-                    "on this system."
+                    "CyberWatchtower detected firewall technology on this system."
                 ),
                 severity=Severity.INFO,
                 recommendation=(
@@ -178,13 +237,16 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                     f"Detected tools: {', '.join(detected_tools)}"
                 ],
                 confidence=95,
-                source="firewall",
+                source=(
+                    "firewall" if platform_name == "linux"
+                    else "firewall_technology"
+                ),
                 kind=FindingKind.OBSERVATION,
                 assessment_state=AssessmentState.INFORMATIONAL,
             )
         )
 
-    if "iptables" in detected_tools:
+    if platform_name == "linux" and "iptables" in detected_tools:
         # The current deterministic interpretation is explicitly Linux-only.
         # Platform-neutral adapters expose inbound posture observations, while
         # this compatibility seam preserves exact legacy iptables evidence.
@@ -255,15 +317,22 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                 )
             )
 
+    if platform_name == "windows":
+        policy_result = adapter.collect_firewall_inbound_policy()
+        coverage[ScanDomain.FIREWALL_INBOUND_POLICY.value] = (
+            policy_result.coverage.value
+        )
+        findings.extend(assess_windows_firewall(policy_result))
+
     score = calculate_security_score(findings)
-    assurance = assessment_assurance_summary(coverage, LEGACY_ASSESSMENT_DOMAINS)
+    assurance = assessment_assurance_summary(coverage, assessment_domains)
 
     return {
         "system": system,
         "firewall": firewall,
         "coverage": coverage,
         "assessment_domains": [
-            domain.value for domain in LEGACY_ASSESSMENT_DOMAINS
+            domain.value for domain in assessment_domains
         ],
         "findings": findings,
         "score": score,
