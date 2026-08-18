@@ -39,10 +39,17 @@ class WindowsNetworkApiProtocol(Protocol):
 
 
 @runtime_checkable
-class WindowsApiProtocol(
-    WindowsSystemApiProtocol, WindowsNetworkApiProtocol, Protocol
-):
-
+class WindowsFirewallApiProtocol(Protocol):
     def get_firewall_profiles(
         self,
     ) -> WindowsApiResult[tuple[RawFirewallProfile, ...]]: ...
+
+
+@runtime_checkable
+class WindowsApiProtocol(
+    WindowsSystemApiProtocol,
+    WindowsNetworkApiProtocol,
+    WindowsFirewallApiProtocol,
+    Protocol,
+):
+    pass
