@@ -47,6 +47,7 @@ class ReportContractTests(unittest.TestCase):
             path = save_json_report(results, directory)
             report = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(report["schema_version"], CURRENT_REPORT_SCHEMA_VERSION)
+        self.assertEqual(report["security_score"]["scoring_version"], "1")
         self.assertEqual(
             report["assessment_domains"],
             [
@@ -125,7 +126,7 @@ class ReportContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             report = json.loads(save_json_report(results, directory).read_text())
         normalized, _ = normalize_report(report)
-        self.assertEqual(normalized.schema_version, "1.3")
+        self.assertEqual(normalized.schema_version, "1.4")
         report["findings"][0]["network_context"]["reachability_state"] = "MODEL_SAYS_SAFE"
         with self.assertRaises(ValueError):
             normalize_report(report)
