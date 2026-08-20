@@ -312,7 +312,11 @@ def main(argv=None):
         print("==============")
         print(f"Previous Score: {comparison['previous_score']}/100")
         print(f"Current Score: {comparison['current_score']}/100")
-        print(f"Change: {comparison['change']:+d}")
+        print(
+            f"Change: {comparison['change']:+d}"
+            if comparison["change"] is not None
+            else "Change: N/A"
+        )
         print(f"Trend: {comparison['trend']}")
 
         if comparison["new_findings"]:
@@ -348,10 +352,26 @@ def main(argv=None):
     print("SECURITY INTELLIGENCE")
     print("=====================")
     print(f"Historical Scans: {intelligence['total_scans']}")
-    print(f"Average Score: {intelligence['average_score']}/100")
-    print(f"Best Score: {intelligence['best_score']}/100")
-    print(f"Worst Score: {intelligence['worst_score']}/100")
-    print(f"Long-Term Change: {intelligence['overall_change']:+}")
+    print(
+        f"Average Score: {intelligence['average_score']}/100"
+        if intelligence["average_score"] is not None
+        else "Average Score: N/A"
+    )
+    print(
+        f"Best Score: {intelligence['best_score']}/100"
+        if intelligence["best_score"] is not None
+        else "Best Score: N/A"
+    )
+    print(
+        f"Worst Score: {intelligence['worst_score']}/100"
+        if intelligence["worst_score"] is not None
+        else "Worst Score: N/A"
+    )
+    print(
+        f"Long-Term Change: {intelligence['overall_change']:+}"
+        if intelligence["overall_change"] is not None
+        else "Long-Term Change: N/A"
+    )
     print(f"Long-Term Trend: {intelligence['overall_trend']}")
 
     recurring = [
