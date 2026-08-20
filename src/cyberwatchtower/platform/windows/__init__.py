@@ -13,6 +13,7 @@ from .errors import (
     WindowsEndpointTable,
     WindowsEndpointTableDiagnostic,
     WindowsEndpointTableResultCode,
+    WindowsEndpointValidationReason,
     WindowsFailureCode,
 )
 from .fake import FakeWindowsApi, WindowsApiFixture
@@ -61,6 +62,7 @@ __all__ = [
     "WindowsEndpointTable",
     "WindowsEndpointTableDiagnostic",
     "WindowsEndpointTableResultCode",
+    "WindowsEndpointValidationReason",
     "WindowsFirewallApiProtocol",
     "WindowsFirewallAction",
     "WindowsFirewallEnablement",

@@ -34,18 +34,40 @@ class WindowsEndpointTableResultCode(str, Enum):
     INTERNAL_ERROR = WindowsFailureCode.INTERNAL_ERROR.value
 
 
+class WindowsEndpointValidationReason(str, Enum):
+    TABLE_HEADER_INVALID = "TABLE_HEADER_INVALID"
+    TABLE_TYPE_INVALID = "TABLE_TYPE_INVALID"
+    ENTRY_COUNT_INVALID = "ENTRY_COUNT_INVALID"
+    BUFFER_SIZE_MISMATCH = "BUFFER_SIZE_MISMATCH"
+    ROW_LAYOUT_INVALID = "ROW_LAYOUT_INVALID"
+    DUPLICATE_ROWS = "DUPLICATE_ROWS"
+    PORT_ENCODING_INVALID = "PORT_ENCODING_INVALID"
+    ADDRESS_ENCODING_INVALID = "ADDRESS_ENCODING_INVALID"
+    BOUNDED_ACQUISITION_INVALID = "BOUNDED_ACQUISITION_INVALID"
+
+
 @dataclass(frozen=True, slots=True)
 class WindowsEndpointTableDiagnostic:
     """Sanitized table outcome containing no endpoint or native error data."""
 
     table: WindowsEndpointTable
     result: WindowsEndpointTableResultCode
+    reason: WindowsEndpointValidationReason | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.table, WindowsEndpointTable):
             raise TypeError("endpoint diagnostic table must use the closed enum.")
         if not isinstance(self.result, WindowsEndpointTableResultCode):
             raise TypeError("endpoint diagnostic result must use the closed enum.")
+        if self.reason is not None and not isinstance(
+            self.reason, WindowsEndpointValidationReason
+        ):
+            raise TypeError("endpoint diagnostic reason must use the closed enum.")
+        if (
+            self.reason is not None
+            and self.result != WindowsEndpointTableResultCode.INVALID_RESULT
+        ):
+            raise ValueError("endpoint validation reasons require an invalid result.")
 
 
 _SAFE_MESSAGES = {

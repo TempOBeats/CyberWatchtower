@@ -16,6 +16,7 @@ from .errors import (
     WindowsEndpointTable,
     WindowsEndpointTableDiagnostic,
     WindowsEndpointTableResultCode,
+    WindowsEndpointValidationReason,
     WindowsFailureCode,
 )
 from .models import (
@@ -54,6 +55,12 @@ class _NativeFailure(Exception):
     def __init__(self, code: WindowsFailureCode):
         super().__init__(code.value)
         self.code = code
+
+
+class _EndpointValidationFailure(ValueError):
+    def __init__(self, reason: WindowsEndpointValidationReason):
+        super().__init__(reason.value)
+        self.reason = reason
 
 
 def _failure_code(native_code: int) -> WindowsFailureCode:
@@ -117,9 +124,13 @@ def decode_endpoint_table(
     """Validate a native endpoint table snapshot and return bounded raw DTOs."""
 
     if not isinstance(data, bytes) or len(data) < 4:
-        raise ValueError("native endpoint table is truncated")
+        raise _EndpointValidationFailure(
+            WindowsEndpointValidationReason.TABLE_HEADER_INVALID
+        )
     if not isinstance(family, WindowsAddressFamily) or protocol not in {"tcp", "udp"}:
-        raise ValueError("native endpoint table type is invalid")
+        raise _EndpointValidationFailure(
+            WindowsEndpointValidationReason.TABLE_TYPE_INVALID
+        )
     formats = {
         ("tcp", WindowsAddressFamily.IPV4): "<6I",
         ("tcp", WindowsAddressFamily.IPV6): "<16sII16sIIII",
@@ -129,18 +140,31 @@ def decode_endpoint_table(
     row_format = formats[(protocol, family)]
     row_size = struct.calcsize(row_format)
     count = struct.unpack_from("<I", data, 0)[0]
-    if count > MAX_ENDPOINTS or 4 + count * row_size > len(data):
-        raise ValueError("native endpoint table count exceeds its buffer")
+    if count > MAX_ENDPOINTS:
+        raise _EndpointValidationFailure(
+            WindowsEndpointValidationReason.ENTRY_COUNT_INVALID
+        )
+    if 4 + count * row_size > len(data):
+        raise _EndpointValidationFailure(
+            WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH
+        )
 
     entries = []
     offset = 4
     for _ in range(count):
-        values = struct.unpack_from(row_format, data, offset)
+        try:
+            values = struct.unpack_from(row_format, data, offset)
+        except struct.error:
+            raise _EndpointValidationFailure(
+                WindowsEndpointValidationReason.ROW_LAYOUT_INVALID
+            ) from None
         offset += row_size
         if protocol == "tcp" and family == WindowsAddressFamily.IPV4:
             state, address, port, _remote, _remote_port, pid = values
             if state != _MIB_TCP_STATE_LISTEN:
-                raise ValueError("non-listener appeared in listener table")
+                raise _EndpointValidationFailure(
+                    WindowsEndpointValidationReason.ROW_LAYOUT_INVALID
+                )
             entry = RawTcpEndpoint(
                 family, _address_v4(address), _port(port), pid,
                 WindowsTcpState.LISTEN,
@@ -148,22 +172,50 @@ def decode_endpoint_table(
         elif protocol == "tcp":
             address, scope, port, _remote, _remote_scope, _remote_port, state, pid = values
             if state != _MIB_TCP_STATE_LISTEN:
-                raise ValueError("non-listener appeared in listener table")
+                raise _EndpointValidationFailure(
+                    WindowsEndpointValidationReason.ROW_LAYOUT_INVALID
+                )
             entry = RawTcpEndpoint(
                 family, _address_v6(address, scope), _port(port), pid,
                 WindowsTcpState.LISTEN,
             )
         elif family == WindowsAddressFamily.IPV4:
             address, port, pid = values
-            entry = RawUdpEndpoint(family, _address_v4(address), _port(port), pid)
+            try:
+                normalized_address = _address_v4(address)
+            except ValueError:
+                raise _EndpointValidationFailure(
+                    WindowsEndpointValidationReason.ADDRESS_ENCODING_INVALID
+                ) from None
+            normalized_port = _port(port)
+            if normalized_port == 0:
+                raise _EndpointValidationFailure(
+                    WindowsEndpointValidationReason.PORT_ENCODING_INVALID
+                )
+            entry = RawUdpEndpoint(
+                family, normalized_address, normalized_port, pid
+            )
         else:
             address, scope, port, pid = values
+            try:
+                normalized_address = _address_v6(address, scope)
+            except ValueError:
+                raise _EndpointValidationFailure(
+                    WindowsEndpointValidationReason.ADDRESS_ENCODING_INVALID
+                ) from None
+            normalized_port = _port(port)
+            if normalized_port == 0:
+                raise _EndpointValidationFailure(
+                    WindowsEndpointValidationReason.PORT_ENCODING_INVALID
+                )
             entry = RawUdpEndpoint(
-                family, _address_v6(address, scope), _port(port), pid
+                family, normalized_address, normalized_port, pid
             )
         entries.append(entry)
     if len(set(entries)) != len(entries):
-        raise ValueError("native endpoint table contains duplicate rows")
+        raise _EndpointValidationFailure(
+            WindowsEndpointValidationReason.DUPLICATE_ROWS
+        )
     return tuple(sorted(
         entries,
         key=lambda item: (item.family.value, item.address, item.port, item.pid),
@@ -180,6 +232,7 @@ def _endpoint_table(
 def _diagnosed_endpoint_result(
     table: WindowsEndpointTable,
     result: WindowsApiResult,
+    reason: WindowsEndpointValidationReason | None = None,
 ) -> WindowsApiResult:
     table_result = (
         WindowsEndpointTableResultCode.COMPLETE
@@ -189,7 +242,7 @@ def _diagnosed_endpoint_result(
     return WindowsApiResult(
         result.value,
         result.failure,
-        (WindowsEndpointTableDiagnostic(table, table_result),),
+        (WindowsEndpointTableDiagnostic(table, table_result, reason),),
     )
 
 
@@ -222,9 +275,10 @@ def _read_endpoint_table(
         if protocol == "tcp" else _UDP_TABLE_OWNER_PID
     )
     native_failure: WindowsFailureCode | None = None
+    validation_reason: WindowsEndpointValidationReason | None = None
 
     def size_query() -> int:
-        nonlocal native_failure
+        nonlocal native_failure, validation_reason
         size = ctypes.c_uint32(0)
         result = function(
             None, ctypes.byref(size), False, native_family, table_class, 0
@@ -232,10 +286,14 @@ def _read_endpoint_table(
         if result not in {_NO_ERROR, _ERROR_INSUFFICIENT_BUFFER}:
             native_failure = _failure_code(int(result))
             return 0
+        if size.value <= 0:
+            validation_reason = (
+                WindowsEndpointValidationReason.BOUNDED_ACQUISITION_INVALID
+            )
         return int(size.value)
 
     def reader(allocation: int):
-        nonlocal native_failure
+        nonlocal native_failure, validation_reason
         buffer = ctypes.create_string_buffer(allocation)
         returned_size = ctypes.c_uint32(allocation)
         result = function(
@@ -249,13 +307,21 @@ def _read_endpoint_table(
             return NativeBufferRead(required_size=allocation)
         if not 4 <= returned_size.value <= allocation:
             native_failure = WindowsFailureCode.INVALID_RESULT
+            validation_reason = (
+                WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH
+            )
             return NativeBufferRead(required_size=allocation)
         try:
             entries = decode_endpoint_table(
                 bytes(buffer.raw[:returned_size.value]), family, protocol
             )
+        except _EndpointValidationFailure as exc:
+            native_failure = WindowsFailureCode.INVALID_RESULT
+            validation_reason = exc.reason
+            return NativeBufferRead(required_size=allocation)
         except (OverflowError, TypeError, ValueError):
             native_failure = WindowsFailureCode.INVALID_RESULT
+            validation_reason = WindowsEndpointValidationReason.ROW_LAYOUT_INVALID
             return NativeBufferRead(required_size=allocation)
         return NativeBufferRead(
             required_size=int(returned_size.value),
@@ -277,7 +343,14 @@ def _read_endpoint_table(
         WindowsApiResult(failure=native_failure)
         if native_failure is not None else bounded
     )
-    return _diagnosed_endpoint_result(table, result)
+    if (
+        result.failure == WindowsFailureCode.INVALID_RESULT
+        and validation_reason is None
+    ):
+        validation_reason = (
+            WindowsEndpointValidationReason.BOUNDED_ACQUISITION_INVALID
+        )
+    return _diagnosed_endpoint_result(table, result, validation_reason)
 
 
 def _combine_endpoint_results(
