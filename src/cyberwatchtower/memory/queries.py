@@ -9,7 +9,7 @@ from .errors import MemoryCorrupt, MemoryLocked, MemoryQueryError
 from .history_models import (
     FindingHistoryQuery, FindingLifecycleSummary, FindingOccurrence, FindingTimeline,
     LatestReportSummary, LifecycleEvent, RecurringFindingsQuery, ScorePoint,
-    ScoreTrendQuery, SystemHistoryQuery,
+    ScoreTrendQuery, SystemHistoryQuery, VersionedScoreSeries,
 )
 
 
@@ -94,14 +94,46 @@ def score_trend(database: MemoryDatabase, query: ScoreTrendQuery):
     start = query.start_at.astimezone(timezone.utc).isoformat()
     end = query.end_at.astimezone(timezone.utc).isoformat()
     def run():
+        version_clause = "" if query.scoring_version is None else " AND scoring_version=?"
+        parameters = [query.system_id, start, end]
+        if query.scoring_version is not None:
+            parameters.append(query.scoring_version)
         rows = database.connection.execute(
-            """SELECT report_id, observed_at, score, risk_level FROM score_history
-               WHERE system_id=? AND observed_at>=? AND observed_at<=?
-               ORDER BY observed_at, report_id""",
-            (query.system_id, start, end),
+            """SELECT report_id, observed_at, score, risk_level, scoring_version
+               FROM score_history
+               WHERE system_id=? AND observed_at>=? AND observed_at<=?"""
+            + version_clause + " ORDER BY observed_at, report_id",
+            tuple(parameters),
         ).fetchall()
-        return tuple(ScorePoint(row["report_id"], row["observed_at"], row["score"], row["risk_level"]) for row in rows)
+        return tuple(ScorePoint(
+            row["report_id"], row["observed_at"], row["score"],
+            row["risk_level"], row["scoring_version"],
+        ) for row in rows)
     return _guard(run)
+
+
+def score_trends_by_version(database: MemoryDatabase, query: ScoreTrendQuery):
+    """Return independently summarized score series; never mix methodologies."""
+    points = score_trend(database, query)
+    versions = (query.scoring_version,) if query.scoring_version else ("1", "2")
+    series = []
+    for version in versions:
+        version_points = tuple(point for point in points if point.scoring_version == version)
+        if not version_points:
+            continue
+        scores = tuple(point.score for point in version_points)
+        change = scores[-1] - scores[0]
+        trend = "IMPROVED" if change > 0 else "DECLINED" if change < 0 else "UNCHANGED"
+        series.append(VersionedScoreSeries(
+            version,
+            version_points,
+            round(sum(scores) / len(scores), 1),
+            max(scores),
+            min(scores),
+            change,
+            trend,
+        ))
+    return tuple(series)
 
 
 def latest_report_summary(database: MemoryDatabase, query: SystemHistoryQuery):

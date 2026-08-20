@@ -396,8 +396,9 @@ def ingest_report(
         connection.execute(
             """INSERT INTO score_history
                (report_id, system_id, score, risk_level, critical_count, high_count,
-                medium_count, low_count, info_count, observed_at, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                medium_count, low_count, info_count, observed_at, provenance,
+                scoring_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 report_id,
                 system_id,
@@ -410,6 +411,7 @@ def ingest_report(
                 counts["INFO"],
                 normalized.generated_at,
                 MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
+                normalized.score.scoring_version,
             ),
         )
         for finding in normalized.findings:

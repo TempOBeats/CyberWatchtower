@@ -40,6 +40,7 @@ class RecurringFindingsQuery(SystemHistoryQuery):
 class ScoreTrendQuery(SystemHistoryQuery):
     start_at: datetime
     end_at: datetime
+    scoring_version: str | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -49,6 +50,8 @@ class ScoreTrendQuery(SystemHistoryQuery):
             raise MemoryQueryError("Score trend start_at must not follow end_at.")
         if self.end_at - self.start_at > MAX_SCORE_TREND_RANGE:
             raise MemoryQueryError("Score trend range exceeds 366 days.")
+        if self.scoring_version not in (None, "1", "2"):
+            raise MemoryQueryError("scoring_version must be '1', '2', or omitted.")
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,18 @@ class ScorePoint:
     observed_at: str
     score: int
     risk_level: str
+    scoring_version: str
+
+
+@dataclass(frozen=True)
+class VersionedScoreSeries:
+    scoring_version: str
+    points: tuple[ScorePoint, ...]
+    average_score: float
+    best_score: int
+    worst_score: int
+    overall_change: int
+    trend: str
 
 
 @dataclass(frozen=True)

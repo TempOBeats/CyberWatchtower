@@ -28,7 +28,13 @@ from .investigations import (
     latest_completed_for_finding,
     latest_completed_for_scope,
 )
-from .queries import finding_timeline, latest_report_summary, recurring_findings, score_trend
+from .queries import (
+    finding_timeline,
+    latest_report_summary,
+    recurring_findings,
+    score_trend,
+    score_trends_by_version,
+)
 
 
 @runtime_checkable
@@ -40,6 +46,7 @@ class SecurityMemory(Protocol):
     def recurring_findings(self, query: RecurringFindingsQuery): ...
     def finding_timeline(self, query: FindingHistoryQuery): ...
     def score_trend(self, query: ScoreTrendQuery): ...
+    def score_trends_by_version(self, query: ScoreTrendQuery): ...
     def active_exceptions(self, *, system_id: str, at: datetime): ...
     def current_baseline(self, *, system_id: str, baseline_type: BaselineType): ...
     def decisions_for_scope(self, *, system_id: str, scope: Scope): ...
@@ -91,6 +98,9 @@ class SQLiteSecurityMemory:
 
     def score_trend(self, query):
         return score_trend(self.__database, query)
+
+    def score_trends_by_version(self, query):
+        return score_trends_by_version(self.__database, query)
 
     def active_exceptions(self, *, system_id, at):
         return active_exceptions(self.__database, system_id=system_id, at=at)
