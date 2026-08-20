@@ -260,6 +260,18 @@ def assess_network_exposure(
                     ],
                     "recommendation": risk["recommendation"],
                     "network_context": reachability.to_report_mapping(),
+                    "scoring_context": {
+                        "protocol": protocol,
+                        "port": int(port),
+                        "bind_exposure": reachability.bind_exposure.value,
+                        "reachability_state": reachability.state.value,
+                        "application_identity": application,
+                        "process_basename": (
+                            process_name
+                            if process_name.casefold() != "unknown"
+                            else None
+                        ),
+                    },
                     "presentation_group_id": listener_group_id(
                         service, reachability, risk["recommendation"]
                     ),
