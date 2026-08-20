@@ -8,7 +8,8 @@ from enum import Enum
 from typing import Mapping
 
 
-CURRENT_REPORT_SCHEMA_VERSION = "1.2"
+CURRENT_REPORT_SCHEMA_VERSION = "1.3"
+APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION = "1.2"
 STRUCTURED_FINDING_REPORT_SCHEMA_VERSION = "1.1"
 LEGACY_REPORT_SCHEMA_VERSION = "1.0"
 
@@ -30,6 +31,7 @@ class ScanDomain(str, Enum):
     IPTABLES_INPUT_POLICY = "iptables_input_policy"
     FIREWALL_INBOUND_POLICY = "firewall_inbound_policy"
     NETWORK_SOCKET_INSPECTION = "network_socket_inspection"
+    NETWORK_REACHABILITY = "network_reachability"
 
 
 LEGACY_ASSESSMENT_DOMAINS: tuple[ScanDomain, ...] = (
@@ -64,6 +66,9 @@ COVERAGE_LIMITATION_MESSAGES: dict[ScanDomain, str] = {
     ),
     ScanDomain.NETWORK_SOCKET_INSPECTION: (
         "listening-service inspection was not completely assessed"
+    ),
+    ScanDomain.NETWORK_REACHABILITY: (
+        "listener reachability was not completely assessed"
     ),
 }
 

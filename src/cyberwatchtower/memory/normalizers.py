@@ -6,6 +6,7 @@ from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.models import AssessmentState, FindingKind, Severity
 from cyberwatchtower.report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
+    APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     CoverageState,
     LEGACY_REPORT_SCHEMA_VERSION,
     STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
@@ -14,6 +15,7 @@ from cyberwatchtower.report_contracts import (
     normalize_coverage,
     report_schema_version,
 )
+from cyberwatchtower.reachability import reachability_from_report
 
 from .ingestion_models import NormalizedFinding, NormalizedReport, NormalizedScore
 from .sanitization import contains_sensitive_marker, sanitize_evidence
@@ -22,6 +24,7 @@ from .sanitization import contains_sensitive_marker, sanitize_evidence
 SUPPORTED_REPORT_SCHEMAS = frozenset({
     LEGACY_REPORT_SCHEMA_VERSION,
     STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
+    APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     CURRENT_REPORT_SCHEMA_VERSION,
 })
 SEVERITIES = tuple(item.value for item in Severity)
@@ -141,6 +144,14 @@ def _score(raw_score, schema_version: str) -> NormalizedScore:
 def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFinding, int]:
     field = f"findings[{index}]"
     finding = _mapping(raw_finding, field)
+    try:
+        reachability_from_report(finding.get("network_context"))
+    except ValueError as exc:
+        raise ReportValidationError(
+            "INVALID_NETWORK_CONTEXT",
+            f"{field}.network_context is invalid.",
+            f"{field}.network_context",
+        ) from exc
     title = _durable_text(
         finding.get("title"), f"{field}.title", maximum=MAX_TITLE_LENGTH
     )
@@ -273,7 +284,10 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
             "INVALID_COVERAGE", "coverage must be an object.", "coverage"
         )
     raw_domains = report.get("assessment_domains")
-    if schema_version == CURRENT_REPORT_SCHEMA_VERSION and raw_domains is None:
+    if schema_version in {
+        APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+        CURRENT_REPORT_SCHEMA_VERSION,
+    } and raw_domains is None:
         raise ReportValidationError(
             "MISSING_ASSESSMENT_DOMAINS",
             "assessment_domains is required for this report schema.",
@@ -299,7 +313,10 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
                 "coverage contains an unknown domain or state.",
                 "coverage",
             )
-        if schema_version == CURRENT_REPORT_SCHEMA_VERSION and set(raw_coverage) - applicable:
+        if schema_version in {
+            APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+            CURRENT_REPORT_SCHEMA_VERSION,
+        } and set(raw_coverage) - applicable:
             raise ReportValidationError(
                 "INAPPLICABLE_COVERAGE",
                 "coverage contains a domain not declared applicable.",
