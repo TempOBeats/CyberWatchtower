@@ -506,6 +506,8 @@ class RetentionMigrationTests(unittest.TestCase):
                 "CREATE TABLE partial_m6(value TEXT);\nNOT SQL;\n", encoding="utf-8")
             Path(root, "0007_placeholder.sql").write_text(
                 "CREATE TABLE never_reached_m7(value TEXT);\n", encoding="utf-8")
+            Path(root, "0008_placeholder.sql").write_text(
+                "CREATE TABLE never_reached_m8(value TEXT);\n", encoding="utf-8")
             path = Path(directory, "memory.db")
             from cyberwatchtower.memory.errors import MemoryMigrationFailed
             with self.assertRaises(MemoryMigrationFailed):

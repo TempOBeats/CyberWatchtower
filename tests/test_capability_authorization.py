@@ -22,6 +22,7 @@ from cyberwatchtower.memory.decisions import (
 from cyberwatchtower.memory.errors import MemoryAuthorizationError
 from cyberwatchtower.memory.errors import MemoryMigrationFailed
 from cyberwatchtower.memory.migrations import discover_migrations
+from cyberwatchtower.memory.models import CURRENT_MEMORY_SCHEMA_VERSION
 
 
 T0 = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
@@ -156,7 +157,7 @@ class CapabilityAuthorizationMigrationTests(unittest.TestCase):
             connection.execute("PRAGMA user_version=6")
             connection.commit(); connection.close()
             with open_memory_database(path) as database:
-                self.assertEqual(database.info.schema_version, 7)
+                self.assertEqual(database.info.schema_version, CURRENT_MEMORY_SCHEMA_VERSION)
                 self.assertIsNotNone(database.connection.execute(
                     "SELECT name FROM sqlite_master WHERE name='idx_reports_content_digest'"
                 ).fetchone())
@@ -168,6 +169,8 @@ class CapabilityAuthorizationMigrationTests(unittest.TestCase):
                     migration.sql, encoding="utf-8")
             Path(migration_dir, "0007_broken.sql").write_text(
                 "CREATE TABLE partial_v7(value TEXT);\nNOT SQL;\n", encoding="utf-8")
+            Path(migration_dir, "0008_placeholder.sql").write_text(
+                "CREATE TABLE never_reached_v8(value TEXT);\n", encoding="utf-8")
             path = Path(directory, "rollback.db")
             with self.assertRaises(MemoryMigrationFailed):
                 open_memory_database(path, migration_directory=migration_dir)
