@@ -9,6 +9,7 @@ from .report_contracts import (
     coverage_complete_for_source,
     legacy_resolution_authorizes,
 )
+from .scoring_report import scoring_version_from_score
 
 
 def _report_timestamp(report: dict, report_path: Path) -> float:
@@ -88,15 +89,20 @@ def compare_reports(previous: dict, current: dict) -> dict:
 
     old_score = previous_score.get("score", 0)
     new_score = current_score.get("score", 0)
+    previous_scoring_version = scoring_version_from_score(previous_score).value
+    current_scoring_version = scoring_version_from_score(current_score).value
 
-    change = new_score - old_score
-
-    if change > 0:
-        trend = "IMPROVED"
-    elif change < 0:
-        trend = "DECLINED"
+    if previous_scoring_version != current_scoring_version:
+        change = None
+        trend = "SCORING_VERSION_CHANGED"
     else:
-        trend = "UNCHANGED"
+        change = new_score - old_score
+        if change > 0:
+            trend = "IMPROVED"
+        elif change < 0:
+            trend = "DECLINED"
+        else:
+            trend = "UNCHANGED"
 
     previous_findings = {
         finding_identity(finding): finding
@@ -140,6 +146,11 @@ def compare_reports(previous: dict, current: dict) -> dict:
     return {
         "previous_score": old_score,
         "current_score": new_score,
+        "previous_scoring_version": previous_scoring_version,
+        "current_scoring_version": current_scoring_version,
+        "scoring_methodology_changed": (
+            previous_scoring_version != current_scoring_version
+        ),
         "change": change,
         "trend": trend,
         "previous_risk": previous_score.get("risk_level", "UNKNOWN"),
