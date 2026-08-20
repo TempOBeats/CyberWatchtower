@@ -246,9 +246,16 @@ def main(argv=None):
         print("No findings detected by the checks currently enabled.")
 
     else:
-        for finding in results["findings"]:
+        from .presentation import group_findings
+        for group in group_findings(results["findings"]):
+            finding = group.findings[0]
             print()
             print(f"[{finding.severity.value}] {finding.title}")
+            if len(group.findings) > 1:
+                print(
+                    f"Related listener findings: {len(group.findings)} "
+                    "(all atomic findings remain in the saved report)"
+                )
             print(f"Description: {finding.description}")
             print(f"Confidence: {finding.confidence}%")
             print(f"Recommendation: {finding.recommendation}")
@@ -358,10 +365,19 @@ def main(argv=None):
         print("RECURRING FINDINGS")
         print("==================")
 
+        grouped_recurring = {}
         for finding in recurring:
+            key = finding.get("presentation_group_id") or finding["finding_id"]
+            grouped_recurring.setdefault(key, []).append(finding)
+        for group in grouped_recurring.values():
+            finding = group[0]
+            related = (
+                f", {len(group)} related listeners" if len(group) > 1 else ""
+            )
             print(
                 f"[{finding['severity']}] {finding['title']} "
-                f"({finding['occurrences']} occurrences)"
+                f"({max(item['occurrences'] for item in group)} occurrences"
+                f"{related})"
             )
 
     _display_advisor(reports[-1], comparison, intelligence)

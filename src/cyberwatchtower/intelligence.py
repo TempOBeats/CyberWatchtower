@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 from .finding_identity import finding_identity
+from .presentation import report_listener_group_id
 
 
 def analyze_history(reports):
@@ -49,6 +50,7 @@ def analyze_history(reports):
             record["title"] = title
             record["finding_id"] = identity
             record["severity"] = finding.get("severity", "UNKNOWN")
+            record["presentation_group_id"] = report_listener_group_id(finding)
 
             if record["first_seen"] is None:
                 record["first_seen"] = timestamp
