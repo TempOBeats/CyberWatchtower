@@ -52,6 +52,7 @@ class ReportIngestionResult:
 
 @dataclass(frozen=True)
 class NormalizedScore:
+    scoring_version: str
     score: int
     risk_level: str
     counts: tuple[tuple[str, int], ...]

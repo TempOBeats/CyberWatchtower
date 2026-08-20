@@ -9,6 +9,7 @@ from cyberwatchtower.report_contracts import (
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     CoverageState,
     LEGACY_REPORT_SCHEMA_VERSION,
+    REACHABILITY_REPORT_SCHEMA_VERSION,
     STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
     ScanDomain,
     normalize_assessment_domains,
@@ -16,6 +17,10 @@ from cyberwatchtower.report_contracts import (
     report_schema_version,
 )
 from cyberwatchtower.reachability import reachability_from_report
+from cyberwatchtower.scoring_report import (
+    ScoringReportValidationError,
+    validate_serialized_security_score,
+)
 
 from .ingestion_models import NormalizedFinding, NormalizedReport, NormalizedScore
 from .sanitization import contains_sensitive_marker, sanitize_evidence
@@ -25,6 +30,7 @@ SUPPORTED_REPORT_SCHEMAS = frozenset({
     LEGACY_REPORT_SCHEMA_VERSION,
     STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+    REACHABILITY_REPORT_SCHEMA_VERSION,
     CURRENT_REPORT_SCHEMA_VERSION,
 })
 SEVERITIES = tuple(item.value for item in Severity)
@@ -117,28 +123,27 @@ def _timestamp(value, field: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _score(raw_score, schema_version: str) -> NormalizedScore:
-    score_data = _mapping(raw_score, "security_score")
-    score = _integer(score_data.get("score"), "security_score.score", 0, 100)
-    risk_level = _text(
-        score_data.get("risk_level"),
-        "security_score.risk_level",
-        default="UNKNOWN" if schema_version == LEGACY_REPORT_SCHEMA_VERSION else None,
-    )
-    raw_counts = score_data.get("counts", {})
-    counts_data = _mapping(raw_counts, "security_score.counts")
-    counts = tuple(
-        (
-            severity,
-            _integer(
-                counts_data.get(severity, 0),
-                f"security_score.counts.{severity}",
-                0,
-            ),
+def _score(
+    raw_score,
+    schema_version: str,
+    finding_ids: set[str],
+) -> NormalizedScore:
+    try:
+        score_data = validate_serialized_security_score(
+            raw_score, schema_version, finding_ids
         )
-        for severity in SEVERITIES
+    except ScoringReportValidationError as exc:
+        raise ReportValidationError(exc.code, str(exc), exc.field) from exc
+    counts_data = score_data["counts"]
+    counts = tuple(
+        (severity, int(counts_data[severity])) for severity in SEVERITIES
     )
-    return NormalizedScore(score, risk_level, counts)
+    return NormalizedScore(
+        str(score_data["scoring_version"]),
+        int(score_data["score"]),
+        str(score_data["risk_level"]),
+        counts,
+    )
 
 
 def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFinding, int]:
@@ -286,6 +291,7 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
     raw_domains = report.get("assessment_domains")
     if schema_version in {
         APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+        REACHABILITY_REPORT_SCHEMA_VERSION,
         CURRENT_REPORT_SCHEMA_VERSION,
     } and raw_domains is None:
         raise ReportValidationError(
@@ -315,6 +321,7 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
             )
         if schema_version in {
             APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+            REACHABILITY_REPORT_SCHEMA_VERSION,
             CURRENT_REPORT_SCHEMA_VERSION,
         } and set(raw_coverage) - applicable:
             raise ReportValidationError(
@@ -325,7 +332,6 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
     coverage = tuple(sorted(
         normalize_coverage(raw_coverage, assessment_domains).items()
     ))
-    score = _score(report.get("security_score"), schema_version)
     raw_findings = report.get("findings")
     if not isinstance(raw_findings, list):
         raise ReportValidationError(
@@ -344,6 +350,7 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
         finding_ids.add(finding.finding_id)
         findings.append(finding)
         omitted_evidence += omitted
+    score = _score(report.get("security_score"), schema_version, finding_ids)
     return NormalizedReport(
         schema_version,
         generated_at,

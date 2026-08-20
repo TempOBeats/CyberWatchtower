@@ -9,6 +9,7 @@ from .report_contracts import (
     normalize_assessment_domains,
     normalize_coverage,
 )
+from .scoring_report import serialize_security_score
 
 
 def finding_to_dict(finding):
@@ -53,6 +54,13 @@ def save_json_report(results, report_directory="reports"):
         results.get("assessment_domains")
     )
     coverage = normalize_coverage(results.get("coverage"), assessment_domains)
+    serialized_findings = [
+        finding_to_dict(finding)
+        for finding in results["findings"]
+    ]
+    report_finding_ids = {
+        finding["finding_id"] for finding in serialized_findings
+    }
     report = {
         "schema_version": CURRENT_REPORT_SCHEMA_VERSION,
         "generated_at": now.isoformat(),
@@ -62,11 +70,10 @@ def save_json_report(results, report_directory="reports"):
         "assessment_assurance": assessment_assurance_summary(
             coverage, assessment_domains
         ),
-        "security_score": results["score"],
-        "findings": [
-            finding_to_dict(finding)
-            for finding in results["findings"]
-        ],
+        "security_score": serialize_security_score(
+            results["score"], report_finding_ids
+        ),
+        "findings": serialized_findings,
     }
 
     report_path = base_report_path
