@@ -366,7 +366,10 @@ class MemoryIntelligenceIntegrationTests(unittest.TestCase):
             main(["--memory-db", "memory.db"])
         self.assertEqual(events, ["scan", "save", "ingest"])
         self.assertIn("Score: 100/100", output.getvalue())
-        self.assertIn("Saved to: reports/saved.json", output.getvalue())
+        self.assertIn(
+            f"Saved to: {Path('reports') / 'saved.json'}",
+            output.getvalue(),
+        )
         self.assertIn("saved JSON report remains complete", output.getvalue())
         self.assertIn("scan complete", output.getvalue())
         self.assertNotIn("memory.db", output.getvalue())
