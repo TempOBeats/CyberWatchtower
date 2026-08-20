@@ -12,7 +12,13 @@ from .network import (
     enrich_process_intelligence,
     assess_network_exposure,
 )
-from .scoring import calculate_security_score
+from .scoring_projection import (
+    canonical_finding_id,
+    network_scoring_identity,
+    project_scoring_findings,
+)
+from .scoring_report import serialize_scoring_result
+from .scoring_v2 import calculate_security_score_v2
 from .report_contracts import (
     CoverageState,
     LEGACY_ASSESSMENT_DOMAINS,
@@ -132,6 +138,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
         policy_basis = _windows_policy_basis(policy_result)
 
     findings = []
+    network_scoring_identities = {}
     coverage = {
         domain.value: CoverageState.UNKNOWN.value
         for domain in assessment_domains
@@ -162,22 +169,24 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
         network_findings = assess_network_exposure(services, policy_basis)
 
         for network_finding in network_findings:
-            findings.append(
-                Finding(
-                    title=network_finding["title"],
-                    description=network_finding["description"],
-                    severity=Severity[network_finding["severity"]],
-                    recommendation=network_finding["recommendation"],
-                    evidence=network_finding["evidence"],
-                    confidence=90,
-                    source="network",
-                    kind=FindingKind.RISK,
-                    assessment_state=AssessmentState.POTENTIAL,
-                    network_context=network_finding["network_context"],
-                    presentation_group_id=network_finding[
-                        "presentation_group_id"
-                    ],
-                )
+            finding = Finding(
+                title=network_finding["title"],
+                description=network_finding["description"],
+                severity=Severity[network_finding["severity"]],
+                recommendation=network_finding["recommendation"],
+                evidence=network_finding["evidence"],
+                confidence=90,
+                source="network",
+                kind=FindingKind.RISK,
+                assessment_state=AssessmentState.POTENTIAL,
+                network_context=network_finding["network_context"],
+                presentation_group_id=network_finding[
+                    "presentation_group_id"
+                ],
+            )
+            findings.append(finding)
+            network_scoring_identities[canonical_finding_id(finding)] = (
+                network_scoring_identity(network_finding["scoring_context"])
             )
 
         if network_result.coverage != CoverageState.COMPLETE:
@@ -389,7 +398,14 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
         )
         findings.extend(assess_windows_firewall(policy_result))
 
-    score = calculate_security_score(findings)
+    scoring_findings = project_scoring_findings(
+        findings, network_scoring_identities
+    )
+    scoring_result = calculate_security_score_v2(scoring_findings)
+    score = serialize_scoring_result(
+        scoring_result,
+        {item.finding_id for item in scoring_findings},
+    )
     assurance = assessment_assurance_summary(coverage, assessment_domains)
 
     return {
