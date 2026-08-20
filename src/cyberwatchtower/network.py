@@ -199,8 +199,15 @@ def enrich_process_intelligence(
 
     return enriched_services
 
-def assess_network_exposure(services: list[dict]) -> list[dict]:
+def assess_network_exposure(
+    services: list[dict],
+    policy_basis: tuple = (),
+) -> list[dict]:
     """Assess listening services for potentially risky exposure."""
+
+    from .platform.models import BindExposure
+    from .presentation import listener_group_id
+    from .reachability import assess_listener_reachability
 
     findings = []
 
@@ -214,6 +221,9 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
         application = service.get("application")
         application_name = service.get("application_name")
         risk = classify_service_risk(service)
+        reachability = assess_listener_reachability(
+            BindExposure(exposure), policy_basis
+        )
 
         if exposure == "all_interfaces":
             findings.append(
@@ -226,7 +236,9 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
                     ),
                     "description": (
                         f"A {protocol.upper()} service on port {port} "
-                        f"is bound to all network interfaces. {risk['reason']}"
+                        "is bound to all network interfaces. This bind can accept "
+                        "traffic arriving on local interfaces, but it does not by "
+                        f"itself prove remote reachability. {risk['reason']}"
                     ),
                     "evidence": [
                         f"Service: {risk['service_name']}",
@@ -244,8 +256,13 @@ def assess_network_exposure(services: list[dict]) -> list[dict]:
                             else []
                         ),
                         "Exposure: all interfaces",
+                        f"Reachability: {reachability.state.value}",
                     ],
                     "recommendation": risk["recommendation"],
+                    "network_context": reachability.to_report_mapping(),
+                    "presentation_group_id": listener_group_id(
+                        service, reachability, risk["recommendation"]
+                    ),
                 }
             )
 

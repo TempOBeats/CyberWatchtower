@@ -26,6 +26,8 @@ def finding_to_dict(finding):
     }
 
     data["finding_id"] = finding.finding_id or finding_identity(data)
+    if finding.network_context is not None:
+        data["network_context"] = finding.network_context
 
     return data
 

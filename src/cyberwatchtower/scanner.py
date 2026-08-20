@@ -23,16 +23,62 @@ from .platform.contracts import PlatformAdapter
 from .platform.linux import LinuxPlatformAdapter
 from .platform.linux.contracts import LinuxFirewallPolicyAdapter
 from .platform.models import FailureCategory
+from .platform.models import (
+    BindExposure,
+    FirewallEnablement,
+    FirewallInboundAction,
+    FirewallProfileState,
+)
 from .platform.errors import UnsupportedPlatformError
 from .platform.selection import select_platform_adapter
 from .windows_firewall import assess_windows_firewall
+from .reachability import (
+    ReachabilityEvidenceBasis,
+    assess_listener_reachability,
+    reachability_coverage,
+)
 
 
 WINDOWS_ASSESSMENT_DOMAINS = (
     ScanDomain.FIREWALL_TECHNOLOGY,
     ScanDomain.FIREWALL_INBOUND_POLICY,
     ScanDomain.NETWORK_SOCKET_INSPECTION,
+    ScanDomain.NETWORK_REACHABILITY,
 )
+
+LINUX_ASSESSMENT_DOMAINS = (
+    *LEGACY_ASSESSMENT_DOMAINS,
+    ScanDomain.NETWORK_REACHABILITY,
+)
+
+
+def _windows_policy_basis(policy_result) -> tuple[ReachabilityEvidenceBasis, ...]:
+    basis = []
+    for posture in policy_result.observations:
+        for profile in posture.profiles:
+            if profile.state != FirewallProfileState.ACTIVE:
+                continue
+            if profile.enablement == FirewallEnablement.DISABLED:
+                basis.append(ReachabilityEvidenceBasis.WINDOWS_FIREWALL_DISABLED)
+            elif profile.default_inbound_action == FirewallInboundAction.ALLOW:
+                basis.append(ReachabilityEvidenceBasis.WINDOWS_PERMISSIVE_DEFAULT)
+            elif profile.default_inbound_action == FirewallInboundAction.BLOCK:
+                basis.append(ReachabilityEvidenceBasis.WINDOWS_RESTRICTIVE_DEFAULT)
+            else:
+                basis.append(ReachabilityEvidenceBasis.FIREWALL_POLICY_UNKNOWN)
+    if not basis:
+        basis.append(ReachabilityEvidenceBasis.FIREWALL_POLICY_UNKNOWN)
+    return tuple(dict.fromkeys(basis))
+
+
+def _linux_policy_basis(iptables_data: dict) -> tuple[ReachabilityEvidenceBasis, ...]:
+    policies = iptables_data.get("policies", {})
+    policy = policies.get("INPUT") if isinstance(policies, dict) else None
+    if policy == "ACCEPT":
+        return (ReachabilityEvidenceBasis.LINUX_INPUT_ACCEPT,)
+    if policy == "DROP":
+        return (ReachabilityEvidenceBasis.LINUX_INPUT_DROP,)
+    return (ReachabilityEvidenceBasis.FIREWALL_POLICY_UNKNOWN,)
 
 
 def _default_platform_adapter() -> PlatformAdapter:
@@ -51,7 +97,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
     adapter = adapter or _default_platform_adapter()
     platform_name = adapter.platform_name.casefold()
     if platform_name == "linux":
-        assessment_domains = LEGACY_ASSESSMENT_DOMAINS
+        assessment_domains = LINUX_ASSESSMENT_DOMAINS
     elif platform_name == "windows":
         assessment_domains = WINDOWS_ASSESSMENT_DOMAINS
     else:
@@ -68,6 +114,22 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
         firewall_result.observations[0].to_mapping()
         if firewall_result.observations else {"detected_tools": [], "tool_paths": {}}
     )
+    detected_tools = firewall.get("detected_tools", [])
+
+    policy_result = None
+    iptables_data = {}
+    policy_basis = (ReachabilityEvidenceBasis.FIREWALL_POLICY_UNKNOWN,)
+    if platform_name == "linux" and "iptables" in detected_tools:
+        linux_policy_adapter = cast(LinuxFirewallPolicyAdapter, adapter)
+        policy_result = linux_policy_adapter.collect_firewall_policy()
+        iptables_data = (
+            policy_result.observations[0].to_assessment_mapping()
+            if policy_result.observations else {}
+        )
+        policy_basis = _linux_policy_basis(iptables_data)
+    elif platform_name == "windows":
+        policy_result = adapter.collect_firewall_inbound_policy()
+        policy_basis = _windows_policy_basis(policy_result)
 
     findings = []
     coverage = {
@@ -79,6 +141,15 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
     network_result = adapter.collect_network()
     coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = network_result.coverage.value
     services = [item.to_service_mapping() for item in network_result.observations]
+    reachability_assessments = tuple(
+        assess_listener_reachability(
+            BindExposure(item["exposure"]), policy_basis
+        )
+        for item in services
+    )
+    coverage[ScanDomain.NETWORK_REACHABILITY.value] = reachability_coverage(
+        network_result.coverage, reachability_assessments
+    ).value
 
     if (
         services
@@ -88,7 +159,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
             FailureCategory.PARTIAL,
         }
     ):
-        network_findings = assess_network_exposure(services)
+        network_findings = assess_network_exposure(services, policy_basis)
 
         for network_finding in network_findings:
             findings.append(
@@ -101,7 +172,11 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                     confidence=90,
                     source="network",
                     kind=FindingKind.RISK,
-                    assessment_state=AssessmentState.CONFIRMED,
+                    assessment_state=AssessmentState.POTENTIAL,
+                    network_context=network_finding["network_context"],
+                    presentation_group_id=network_finding[
+                        "presentation_group_id"
+                    ],
                 )
             )
 
@@ -160,8 +235,6 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                 assessment_state=AssessmentState.INCOMPLETE,
             )
         )
-
-    detected_tools = firewall.get("detected_tools", [])
 
     if (
         platform_name == "windows"
@@ -250,13 +323,6 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
         # The current deterministic interpretation is explicitly Linux-only.
         # Platform-neutral adapters expose inbound posture observations, while
         # this compatibility seam preserves exact legacy iptables evidence.
-        linux_policy_adapter = cast(LinuxFirewallPolicyAdapter, adapter)
-        policy_result = linux_policy_adapter.collect_firewall_policy()
-        iptables_data = (
-            policy_result.observations[0].to_assessment_mapping()
-            if policy_result.observations else {}
-        )
-
         if iptables_data.get("accessible"):
             assessment = assess_iptables(iptables_data)
 
@@ -318,7 +384,6 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
             )
 
     if platform_name == "windows":
-        policy_result = adapter.collect_firewall_inbound_policy()
         coverage[ScanDomain.FIREWALL_INBOUND_POLICY.value] = (
             policy_result.coverage.value
         )

@@ -36,3 +36,5 @@ class Finding:
     source: str = "unknown"
     kind: FindingKind = FindingKind.RISK
     assessment_state: AssessmentState = AssessmentState.POTENTIAL
+    network_context: dict[str, object] | None = None
+    presentation_group_id: str | None = None
