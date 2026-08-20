@@ -314,9 +314,6 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
 
     def test_udp4_validation_branches_have_closed_sanitized_reasons(self):
         zero_port_row = struct.pack("<3I", 0, 0, 4)
-        duplicate_row = struct.pack(
-            "<3I", 0, self._native_port(53), 4
-        )
         cases = (
             (b"", WindowsEndpointValidationReason.TABLE_HEADER_INVALID),
             (
@@ -331,10 +328,6 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
                 struct.pack("<I", 1) + zero_port_row,
                 WindowsEndpointValidationReason.PORT_ENCODING_INVALID,
             ),
-            (
-                struct.pack("<I", 2) + duplicate_row + duplicate_row,
-                WindowsEndpointValidationReason.DUPLICATE_ROWS,
-            ),
         )
         for data, expected in cases:
             with self.subTest(reason=expected), self.assertRaises(
@@ -342,6 +335,79 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
             ) as raised:
                 decode_endpoint_table(data, WindowsAddressFamily.IPV4, "udp")
             self.assertEqual(raised.exception.reason, expected)
+
+    def test_udp4_duplicate_owner_rows_are_one_semantic_endpoint(self):
+        row = struct.pack("<3I", 0, self._native_port(53), 4)
+        payload = struct.pack("<I", 2) + row + row
+
+        endpoints = decode_endpoint_table(
+            payload, WindowsAddressFamily.IPV4, "udp"
+        )
+
+        self.assertEqual(endpoints, (
+            RawUdpEndpoint(WindowsAddressFamily.IPV4, "0.0.0.0", 53, 4),
+        ))
+
+    def test_udp4_duplicate_owner_rows_keep_native_table_complete(self):
+        row = struct.pack("<3I", 0, self._native_port(53), 4)
+        payload = struct.pack("<I", 2) + row + row
+
+        class FixedNativeTable:
+            def __call__(self, buffer, size_pointer, *_args):
+                size_pointer._obj.value = len(payload)
+                if buffer is None:
+                    return 122
+                ctypes.memmove(buffer, payload, len(payload))
+                return 0
+
+        api = SimpleNamespace(GetExtendedUdpTable=FixedNativeTable())
+        with patch(
+            "cyberwatchtower.platform.windows.native_network._iphlpapi",
+            return_value=api,
+        ):
+            result = _read_endpoint_table(WindowsAddressFamily.IPV4, "udp")
+
+        self.assertEqual(result.value, (
+            RawUdpEndpoint(WindowsAddressFamily.IPV4, "0.0.0.0", 53, 4),
+        ))
+        self.assertIsNone(result.failure)
+        self.assertEqual(result.endpoint_diagnostics, (
+            WindowsEndpointTableDiagnostic(
+                WindowsEndpointTable.UDP_IPV4,
+                WindowsEndpointTableResultCode.COMPLETE,
+            ),
+        ))
+        normalized = collect_windows_network(fixture_api(udp_result=result))
+        self.assertEqual(normalized.coverage, CoverageState.COMPLETE)
+        self.assertEqual(len(normalized.observations), 1)
+
+    def test_udp4_duplicate_prefix_does_not_hide_truncation(self):
+        row = struct.pack("<3I", 0, self._native_port(53), 4)
+        truncated = struct.pack("<I", 3) + row + row
+
+        with self.assertRaises(_EndpointValidationFailure) as raised:
+            decode_endpoint_table(
+                truncated, WindowsAddressFamily.IPV4, "udp"
+            )
+
+        self.assertEqual(
+            raised.exception.reason,
+            WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH,
+        )
+
+    def test_tcp_duplicate_rows_remain_invalid(self):
+        row = struct.pack("<6I", 2, 0, self._native_port(80), 0, 0, 4)
+        payload = struct.pack("<I", 2) + row + row
+
+        with self.assertRaises(_EndpointValidationFailure) as raised:
+            decode_endpoint_table(
+                payload, WindowsAddressFamily.IPV4, "tcp"
+            )
+
+        self.assertEqual(
+            raised.exception.reason,
+            WindowsEndpointValidationReason.DUPLICATE_ROWS,
+        )
 
     def test_udp4_native_invalid_result_retains_only_validation_category(self):
         payload = struct.pack("<I3I", 1, 0, 0, 4)
