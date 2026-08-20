@@ -147,10 +147,14 @@ class NetworkProtocol(str, Enum):
     UDP = "udp"
 
 
-class ListenerExposure(str, Enum):
+class BindExposure(str, Enum):
     ALL_INTERFACES = "all_interfaces"
     LOOPBACK = "loopback"
     INTERFACE = "interface"
+
+
+# Backward-compatible name retained for existing adapters and callers.
+ListenerExposure = BindExposure
 
 
 @dataclass(frozen=True)
@@ -159,7 +163,7 @@ class ListenerObservation:
     state: str
     address: str
     port: int
-    exposure: ListenerExposure
+    exposure: BindExposure
     process: str = "unknown"
     pid: int | None = None
     application: str | None = None
@@ -169,7 +173,7 @@ class ListenerObservation:
     def __post_init__(self) -> None:
         if not isinstance(self.protocol, NetworkProtocol):
             raise TypeError("listener protocol must use the closed enum.")
-        if not isinstance(self.exposure, ListenerExposure):
+        if not isinstance(self.exposure, BindExposure):
             raise TypeError("listener exposure must use the closed enum.")
         _text(self.state, "listener state", 128)
         _text(self.address, "listener address", 1024)
@@ -203,7 +207,7 @@ class ListenerObservation:
             value.get("state"),
             value.get("address"),
             port,
-            ListenerExposure(value.get("exposure")),
+            BindExposure(value.get("exposure")),
             value.get("process", "unknown"),
             value.get("pid"),
             value.get("application"),
