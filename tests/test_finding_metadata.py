@@ -1,9 +1,23 @@
 import unittest
 from unittest.mock import patch
 
+import cyberwatchtower.scanner as scanner_module
 from cyberwatchtower.models import AssessmentState, Finding, FindingKind, Severity
+from cyberwatchtower.platform.linux import LinuxPlatformAdapter
 from cyberwatchtower.reporting import finding_to_dict
 from cyberwatchtower.scanner import run_scan
+
+
+def _run_linux_fixture_scan():
+    """Run patched Linux collector fixtures without consulting the host OS."""
+
+    return run_scan(LinuxPlatformAdapter(
+        system_collector=scanner_module.collect_system_information,
+        firewall_collector=scanner_module.check_firewall,
+        network_collector=scanner_module.inspect_listening_services,
+        firewall_policy_collector=scanner_module.inspect_iptables,
+        process_enricher=lambda services: services,
+    ))
 
 
 class FindingMetadataTests(unittest.TestCase):
@@ -54,7 +68,7 @@ class FindingMetadataTests(unittest.TestCase):
                 return_value={"detected_tools": ["nftables"]},
             ),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
 
         exposed = next(f for f in result["findings"] if "SSH" in f.title)
         firewall = next(
@@ -81,7 +95,7 @@ class FindingMetadataTests(unittest.TestCase):
                 return_value={"detected_tools": ["nftables"]},
             ),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
 
         finding = next(
             f for f in result["findings"]
@@ -118,7 +132,7 @@ class FindingMetadataTests(unittest.TestCase):
                 },
             ),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
 
         finding = next(
             f for f in result["findings"] if f.title == "iptables firewall assessment"
@@ -150,7 +164,7 @@ class FindingMetadataTests(unittest.TestCase):
                 },
             ),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
 
         finding = next(
             f for f in result["findings"] if f.title == "iptables firewall assessment"

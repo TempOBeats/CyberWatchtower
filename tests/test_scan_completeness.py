@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import cyberwatchtower.scanner as scanner_module
 from cyberwatchtower.firewall import assess_iptables
 from cyberwatchtower.network import (
     SocketCompletenessCode,
@@ -28,7 +29,41 @@ from cyberwatchtower.memory.ingestion_models import ReportIngestionRequest
 from cyberwatchtower.platform.linux import LinuxPlatformAdapter
 
 
+def _run_linux_fixture_scan():
+    """Run patched Linux fixtures through an explicit hermetic adapter."""
+
+    return run_scan(LinuxPlatformAdapter(
+        system_collector=scanner_module.collect_system_information,
+        firewall_collector=scanner_module.check_firewall,
+        network_collector=scanner_module.inspect_listening_services,
+        firewall_policy_collector=scanner_module.inspect_iptables,
+        process_enricher=lambda services: services,
+    ))
+
+
 class SocketInspectionTests(unittest.TestCase):
+    def test_linux_fixture_scan_is_host_independent_and_never_collects_windows(self):
+        header = (
+            "Netid State Recv-Q Send-Q Local Address:Port "
+            "Peer Address:Port Process"
+        )
+        with (
+            patch("cyberwatchtower.platform.selection.platform.system",
+                  return_value="Windows"),
+            patch("cyberwatchtower.platform.windows.NativeWindowsApi",
+                  side_effect=AssertionError("native collection must not run")),
+            patch("cyberwatchtower.scanner.collect_system_information",
+                  return_value={}),
+            patch("cyberwatchtower.scanner.check_firewall",
+                  return_value={"detected_tools": ["nftables"]}),
+            patch("cyberwatchtower.scanner.inspect_listening_services",
+                  return_value={"accessible": True, "raw_output": header}),
+        ):
+            result = _run_linux_fixture_scan()
+
+        self.assertIn("iptables_input_policy", result["assessment_domains"])
+        self.assertNotIn("firewall_inbound_policy", result["assessment_domains"])
+
     def test_success_exit_with_netlink_error_is_inaccessible(self):
         command_result = {
             "success": True,
@@ -74,7 +109,7 @@ class SocketInspectionTests(unittest.TestCase):
                 return_value=network_result,
             ),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
 
         self.assertLess(result["score"]["score"], 100)
         self.assertEqual(
@@ -126,7 +161,7 @@ class FirewallAssessmentTests(unittest.TestCase):
                 "policies": {"INPUT": "DROP"},
             }),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
 
         self.assertEqual(
             result["coverage"][ScanDomain.NETWORK_SOCKET_INSPECTION.value],
@@ -150,7 +185,7 @@ class FirewallAssessmentTests(unittest.TestCase):
             patch("cyberwatchtower.scanner.inspect_iptables",
                   return_value={"accessible": False, "message": "not available"}),
         ):
-            result = run_scan()
+            result = _run_linux_fixture_scan()
         self.assertEqual(result["score"]["score"], 100)
         self.assertEqual(result["assessment_assurance"]["level"], "PARTIAL")
         self.assertIn(
@@ -277,7 +312,7 @@ class SocketOutputValidationTests(unittest.TestCase):
             self.assertNotIn(canary, repr(inspected))
             with patch("cyberwatchtower.scanner.inspect_listening_services",
                        return_value=inspected):
-                scan = run_scan()
+                scan = _run_linux_fixture_scan()
         self.assertNotIn(canary, repr(scan))
         self.assertIn("SOCKET_COMMAND_FAILED", repr(scan["findings"]))
         with tempfile.TemporaryDirectory() as directory:
