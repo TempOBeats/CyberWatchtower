@@ -76,7 +76,7 @@ class FindingMetadataTests(unittest.TestCase):
         )
         self.assertEqual((exposed.kind, exposed.assessment_state), (
             FindingKind.RISK,
-            AssessmentState.CONFIRMED,
+            AssessmentState.POTENTIAL,
         ))
         self.assertEqual((firewall.kind, firewall.assessment_state), (
             FindingKind.OBSERVATION,

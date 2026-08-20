@@ -106,11 +106,16 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
         findings = [finding_to_dict(item) for item in result["findings"]]
         self.assertEqual(result["assessment_domains"], [
             "firewall_technology", "firewall_inbound_policy",
-            "network_socket_inspection",
+            "network_socket_inspection", "network_reachability",
         ])
         self.assertNotIn("iptables_input_policy", result["coverage"])
-        self.assertEqual(set(result["coverage"].values()), {"COMPLETE"})
-        self.assertEqual(result["assessment_assurance"]["level"], "COMPLETE")
+        self.assertEqual(result["coverage"], {
+            "firewall_technology": "COMPLETE",
+            "firewall_inbound_policy": "COMPLETE",
+            "network_socket_inspection": "COMPLETE",
+            "network_reachability": "INCOMPLETE",
+        })
+        self.assertEqual(result["assessment_assurance"]["level"], "PARTIAL")
         self.assertEqual(result["score"], {
             "score": 90, "risk_level": "LOW",
             "counts": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 1,
@@ -122,7 +127,7 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
              for item in findings],
             [
                 ("Alternate HTTP service listening on all interfaces", "MEDIUM",
-                 "RISK", "CONFIRMED", 90),
+                 "RISK", "POTENTIAL", 90),
                 ("Firewall technology detected", "INFO", "OBSERVATION",
                  "INFORMATIONAL", 95),
                 ("Windows Firewall Private profile blocks inbound traffic by default",
@@ -222,7 +227,7 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
         for boundary in (durable, repr(context), repr(provider), repr(core)):
             self.assertNotIn("phase5-machine-guid", boundary)
             self.assertNotIn("canary-secret", boundary)
-        self.assertEqual(report["schema_version"], "1.2")
+        self.assertEqual(report["schema_version"], "1.3")
         self.assertEqual(report["assessment_domains"], result["assessment_domains"])
 
     def test_report_history_and_memory_use_existing_schema_and_coverage_rules(self):

@@ -245,6 +245,8 @@ class LinuxAdapterContractTests(unittest.TestCase):
             "title": "Alternate HTTP service listening on all interfaces",
             "description": (
                 "A TCP service on port 8080 is bound to all network interfaces. "
+                "This bind can accept traffic arriving on local interfaces, but "
+                "it does not by itself prove remote reachability. "
                 "Port 8080 is commonly used for alternate HTTP or development web services."
             ),
             "severity": "MEDIUM",
@@ -257,17 +259,27 @@ class LinuxAdapterContractTests(unittest.TestCase):
                 "Port: 8080", "Process: python3", "PID: 42",
                 "Application: /usr/bin/wsdd", "Service/Application: WSDD",
                 "Exposure: all interfaces",
+                "Reachability: POTENTIALLY_REACHABLE",
             ],
             "confidence": 90,
             "technique_id": None,
             "source": "network",
             "kind": "RISK",
-            "assessment_state": "CONFIRMED",
+            "assessment_state": "POTENTIAL",
             "finding_id": (
                 "type=alternate http service listening on all interfaces|"
                 "address=0.0.0.0|application=/usr/bin/wsdd|port=8080|"
                 "process=python3|protocol=tcp"
             ),
+            "network_context": {
+                "bind_exposure": "all_interfaces",
+                "bind_epistemic_role": "OBSERVED_FACT",
+                "reachability_state": "POTENTIALLY_REACHABLE",
+                "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+                "evidence_basis": [
+                    "SOCKET_WILDCARD_BIND", "FIREWALL_POLICY_UNKNOWN",
+                ],
+            },
         })
         self.assertEqual(result["score"]["score"], 90)
         self.assertEqual(result["score"]["risk_level"], "LOW")

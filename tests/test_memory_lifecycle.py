@@ -161,6 +161,44 @@ class MemoryLifecycleTests(MemoryTestSupport, unittest.TestCase):
                           timeline.severity_changes[0].current_value), ("LOW", "HIGH"))
         self.assertTrue(all(event.report_id == result.report_id for event in timeline.events[-3:]))
 
+    def test_reachability_semantic_update_preserves_identity_without_false_reopen(self):
+        first = report(
+            "system-a", "2026-08-01T00:00:00+00:00",
+            findings=[finding(assessment_state="CONFIRMED")],
+        )
+        self.ingest(first)
+        current_finding = finding(assessment_state="POTENTIAL")
+        current_finding["network_context"] = {
+            "bind_exposure": "all_interfaces",
+            "bind_epistemic_role": "OBSERVED_FACT",
+            "reachability_state": "POTENTIALLY_REACHABLE",
+            "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+            "evidence_basis": ["SOCKET_WILDCARD_BIND"],
+        }
+        current = report(
+            "system-a", "2026-08-02T00:00:00+00:00",
+            findings=[current_finding],
+        )
+        current.update({
+            "schema_version": "1.3",
+            "assessment_domains": [
+                "network_socket_inspection", "network_reachability",
+            ],
+            "coverage": {
+                "network_socket_inspection": "COMPLETE",
+                "network_reachability": "INCOMPLETE",
+            },
+        })
+        self.ingest(current)
+        timeline = self.timeline()
+        self.assertEqual(timeline.summary.lifecycle_state, "ACTIVE")
+        self.assertEqual(timeline.summary.reopened_count, 0)
+        self.assertEqual(timeline.summary.occurrence_count, 2)
+        self.assertEqual(
+            [item.event_type for item in timeline.events],
+            ["FIRST_SEEN", "SEEN", "ASSESSMENT_STATE_CHANGED"],
+        )
+
     def test_legacy_finding_remains_potential_and_inferred(self):
         self.ingest(report("system-a", "2026-08-01T00:00:00+00:00"))
         legacy = {

@@ -20,6 +20,7 @@ from cyberwatchtower.report_contracts import (
     report_schema_version,
 )
 from cyberwatchtower.reporting import save_json_report
+from cyberwatchtower.memory.normalizers import normalize_report
 
 
 class ReportContractTests(unittest.TestCase):
@@ -71,6 +72,63 @@ class ReportContractTests(unittest.TestCase):
                 "network_socket_inspection",
             ),
         )
+
+    def test_schemas_10_through_12_remain_readable_without_reachability_inference(self):
+        base = {
+            "generated_at": "2026-08-13T00:00:00+00:00",
+            "system": {"hostname": "legacy", "system_id": "system:legacy"},
+            "security_score": {
+                "score": 90, "risk_level": "LOW", "counts": {"MEDIUM": 1},
+            },
+            "findings": [{
+                "finding_id": "legacy-listener", "title": "Legacy listener",
+                "description": "Recorded under its original semantics.",
+                "severity": "MEDIUM", "recommendation": "Review it.",
+                "evidence": ["Port: 8080"], "confidence": 90,
+                "source": "network", "kind": "RISK",
+                "assessment_state": "CONFIRMED",
+            }],
+        }
+        reports = []
+        for version in ("1.0", "1.1", "1.2"):
+            report = json.loads(json.dumps(base))
+            report["schema_version"] = version
+            if version == "1.2":
+                report["assessment_domains"] = ["network_socket_inspection"]
+            report["coverage"] = {"network_socket_inspection": "COMPLETE"}
+            reports.append(normalize_report(report)[0])
+        self.assertEqual([item.schema_version for item in reports], ["1.0", "1.1", "1.2"])
+        self.assertTrue(all(
+            item.findings[0].assessment_state == "CONFIRMED" for item in reports
+        ))
+
+    def test_new_report_network_context_is_closed_and_explicit(self):
+        results = {
+            "system": {"hostname": "host"},
+            "assessment_domains": ["network_socket_inspection", "network_reachability"],
+            "coverage": {
+                "network_socket_inspection": "COMPLETE",
+                "network_reachability": "INCOMPLETE",
+            },
+            "score": {"score": 90, "risk_level": "LOW", "counts": {"MEDIUM": 1}},
+            "findings": [Finding(
+                "Bound service", "Bind observed", Severity.MEDIUM, "Review it",
+                source="network", network_context={
+                    "bind_exposure": "all_interfaces",
+                    "bind_epistemic_role": "OBSERVED_FACT",
+                    "reachability_state": "POTENTIALLY_REACHABLE",
+                    "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+                    "evidence_basis": ["SOCKET_WILDCARD_BIND"],
+                },
+            )],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report = json.loads(save_json_report(results, directory).read_text())
+        normalized, _ = normalize_report(report)
+        self.assertEqual(normalized.schema_version, "1.3")
+        report["findings"][0]["network_context"]["reachability_state"] = "MODEL_SAYS_SAFE"
+        with self.assertRaises(ValueError):
+            normalize_report(report)
 
     def test_assurance_uses_only_explicitly_applicable_domains(self):
         coverage = {
