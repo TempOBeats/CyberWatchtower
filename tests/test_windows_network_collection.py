@@ -1,4 +1,5 @@
 import ast
+import dataclasses
 import inspect
 import ipaddress
 import json
@@ -23,6 +24,9 @@ from cyberwatchtower.platform.windows import (
     WindowsAddressFamily,
     WindowsApiFixture,
     WindowsApiResult,
+    WindowsEndpointTable,
+    WindowsEndpointTableDiagnostic,
+    WindowsEndpointTableResultCode,
     WindowsFailureCode,
     WindowsNetworkApiProtocol,
     WindowsServiceState,
@@ -30,6 +34,8 @@ from cyberwatchtower.platform.windows import (
     collect_windows_network,
 )
 from cyberwatchtower.platform.windows.native_network import (
+    _diagnosed_endpoint_result,
+    _endpoint_table,
     collect_tcp_endpoints,
     decode_endpoint_table,
 )
@@ -177,12 +183,26 @@ class WindowsEndpointNormalizationTests(unittest.TestCase):
             WindowsTcpState.LISTEN,
         )
         result = collect_windows_network(fixture_api(
-            tcp_result=WindowsApiResult((endpoint,), WindowsFailureCode.PARTIAL_RESULT),
-            udp_result=failure(WindowsFailureCode.ACCESS_DENIED),
+            tcp_result=WindowsApiResult(
+                (endpoint,), WindowsFailureCode.PARTIAL_RESULT,
+                (WindowsEndpointTableDiagnostic(
+                    WindowsEndpointTable.TCP_IPV6,
+                    WindowsEndpointTableResultCode.BUFFER_UNSTABLE,
+                ),),
+            ),
+            udp_result=WindowsApiResult(
+                failure=WindowsFailureCode.ACCESS_DENIED,
+                endpoint_diagnostics=(WindowsEndpointTableDiagnostic(
+                    WindowsEndpointTable.UDP_IPV4,
+                    WindowsEndpointTableResultCode.ACCESS_DENIED,
+                ),),
+            ),
         ))
         self.assertEqual(result.coverage, CoverageState.INCOMPLETE)
         self.assertEqual(len(result.observations), 1)
         self.assertEqual(result.failure.code.value, "COLLECTOR_PERMISSION_DENIED")
+        self.assertNotIn("TCP_IPV6", repr(result))
+        self.assertNotIn("UDP_IPV4", repr(result))
 
         unavailable = collect_windows_network(fixture_api(
             tcp_result=failure(WindowsFailureCode.UNSUPPORTED),
@@ -270,11 +290,79 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
         )
         with patch(
             "cyberwatchtower.platform.windows.native_network._read_endpoint_table",
-            side_effect=(success((endpoint,)), failure(WindowsFailureCode.ACCESS_DENIED)),
+            side_effect=(
+                WindowsApiResult(
+                    (endpoint,), endpoint_diagnostics=(
+                        WindowsEndpointTableDiagnostic(
+                            WindowsEndpointTable.TCP_IPV4,
+                            WindowsEndpointTableResultCode.COMPLETE,
+                        ),
+                    ),
+                ),
+                WindowsApiResult(
+                    failure=WindowsFailureCode.ACCESS_DENIED,
+                    endpoint_diagnostics=(WindowsEndpointTableDiagnostic(
+                        WindowsEndpointTable.TCP_IPV6,
+                        WindowsEndpointTableResultCode.ACCESS_DENIED,
+                    ),),
+                ),
+            ),
         ):
             result = collect_tcp_endpoints()
         self.assertEqual(result.failure, WindowsFailureCode.PARTIAL_RESULT)
         self.assertEqual(result.value, (endpoint,))
+        self.assertEqual(result.endpoint_diagnostics, (
+            WindowsEndpointTableDiagnostic(
+                WindowsEndpointTable.TCP_IPV4,
+                WindowsEndpointTableResultCode.COMPLETE,
+            ),
+            WindowsEndpointTableDiagnostic(
+                WindowsEndpointTable.TCP_IPV6,
+                WindowsEndpointTableResultCode.ACCESS_DENIED,
+            ),
+        ))
+
+    def test_all_four_table_ids_and_sanitized_result_codes_are_closed(self):
+        cases = (
+            (WindowsAddressFamily.IPV4, "tcp", WindowsEndpointTable.TCP_IPV4),
+            (WindowsAddressFamily.IPV6, "tcp", WindowsEndpointTable.TCP_IPV6),
+            (WindowsAddressFamily.IPV4, "udp", WindowsEndpointTable.UDP_IPV4),
+            (WindowsAddressFamily.IPV6, "udp", WindowsEndpointTable.UDP_IPV6),
+        )
+        for family, protocol, expected in cases:
+            with self.subTest(table=expected):
+                table = _endpoint_table(family, protocol)
+                complete = _diagnosed_endpoint_result(table, success(()))
+                failed = _diagnosed_endpoint_result(
+                    table, failure(WindowsFailureCode.BUFFER_UNSTABLE)
+                )
+                self.assertEqual(complete.endpoint_diagnostics, (
+                    WindowsEndpointTableDiagnostic(
+                        expected, WindowsEndpointTableResultCode.COMPLETE
+                    ),
+                ))
+                self.assertEqual(failed.endpoint_diagnostics, (
+                    WindowsEndpointTableDiagnostic(
+                        expected, WindowsEndpointTableResultCode.BUFFER_UNSTABLE
+                    ),
+                ))
+
+    def test_endpoint_diagnostics_cannot_carry_native_text_or_endpoint_data(self):
+        fields = {
+            item.name for item in dataclasses.fields(
+                WindowsEndpointTableDiagnostic
+            )
+        }
+        self.assertEqual(fields, {"table", "result"})
+        diagnostic = WindowsEndpointTableDiagnostic(
+            WindowsEndpointTable.UDP_IPV6,
+            WindowsEndpointTableResultCode.INVALID_RESULT,
+        )
+        rendered = repr(diagnostic)
+        for canary in (
+            "token=SECRET", "native error", "command line", "address", "pid"
+        ):
+            self.assertNotIn(canary.casefold(), rendered.casefold())
 
 
 class WindowsNetworkPrivacyAndBoundaryTests(unittest.TestCase):
@@ -343,8 +431,15 @@ class WindowsNetworkPrivacyAndBoundaryTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "win32", "requires a real Windows host")
     def test_read_only_native_endpoint_functions(self):
         native = NativeWindowsApi()
-        self.assertIsNotNone(native.get_tcp_endpoints())
-        self.assertIsNotNone(native.get_udp_endpoints())
+        tcp = native.get_tcp_endpoints()
+        udp = native.get_udp_endpoints()
+        self.assertTrue(tcp.succeeded, tcp.endpoint_diagnostics)
+        self.assertTrue(udp.succeeded, udp.endpoint_diagnostics)
+        self.assertEqual(
+            {item.table for item in (*tcp.endpoint_diagnostics,
+                                     *udp.endpoint_diagnostics)},
+            set(WindowsEndpointTable),
+        )
         self.assertIsNotNone(native.list_services())
 
 
