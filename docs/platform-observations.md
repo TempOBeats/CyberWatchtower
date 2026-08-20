@@ -25,18 +25,30 @@ block-all-inbound state. These immutable values are observations only. Adapters
 must not assign findings, severity, scores, recommendations, approvals, or model
 evidence.
 
-Report schema 1.2 declares `assessment_domains` explicitly. Assurance is derived
-only from those applicable domains. Reports without this field retain the
-original conservative Linux-era domain set, so schema 1.0 and 1.1 history is not
-reinterpreted. The neutral `firewall_inbound_policy` domain is independent of
+Report schema 1.3 declares `assessment_domains` explicitly and can carry closed
+listener bind/reachability metadata. Assurance is derived only from applicable
+domains. Reports without applicability retain the original conservative
+Linux-era domain set, and schema 1.0 through 1.2 history is read exactly as
+recorded without inferred reachability. The neutral `firewall_inbound_policy`
+domain is independent of
 the retained `iptables_input_policy` domain. New neutral firewall-policy finding
 sources map explicitly to the former; legacy Linux firewall sources retain their
 existing coverage mapping.
 
+Socket bind exposure and remote reachability are separate contracts. A wildcard
+or interface bind is an observed fact, while reachability is a deterministic
+derivation. Without complete effective-rule applicability, a non-loopback bind
+is only potentially reachable; a restrictive default firewall policy is
+context, not proof that the listener is blocked. `network_socket_inspection`
+and `network_reachability` retain independent coverage states. Presentation may
+group related IPv4/IPv6 listeners, but canonical reports and memory retain every
+atomic finding and stable finding ID.
+
 Linux continues to use its existing iptables observation and deterministic
-interpretation path for exact behavior parity. The Linux adapter also exposes a
-neutral posture translation for the future adapter boundary, but Phase 0 does
-not use that translation to change Linux findings or evidence.
+firewall interpretation path. INPUT `ACCEPT` remains a confirmed permissive
+policy finding, while `DROP` is restrictive policy context rather than proof
+that a particular listener is blocked. The adapter's neutral posture translation
+does not create listener conclusions or alter collector authority.
 
 Listener attribution states (`ATTRIBUTED`, `UNAVAILABLE`, `AMBIGUOUS`, and
 `NOT_APPLICABLE`) are deferred until the Windows process/service attribution
