@@ -9,7 +9,12 @@ from .api import (
 from .api_native import NativeWindowsApi
 from .adapter import WindowsPlatformAdapter
 from .buffer import NativeBufferRead, read_bounded_native_table
-from .errors import WindowsFailureCode
+from .errors import (
+    WindowsEndpointTable,
+    WindowsEndpointTableDiagnostic,
+    WindowsEndpointTableResultCode,
+    WindowsFailureCode,
+)
 from .fake import FakeWindowsApi, WindowsApiFixture
 from .system import collect_windows_system
 from .network import collect_windows_network
@@ -53,6 +58,9 @@ __all__ = [
     "WindowsPlatformAdapter",
     "WindowsApiResult",
     "WindowsFailureCode",
+    "WindowsEndpointTable",
+    "WindowsEndpointTableDiagnostic",
+    "WindowsEndpointTableResultCode",
     "WindowsFirewallApiProtocol",
     "WindowsFirewallAction",
     "WindowsFirewallEnablement",

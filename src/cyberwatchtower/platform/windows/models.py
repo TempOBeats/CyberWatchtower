@@ -14,7 +14,11 @@ from ..models import (
     FirewallProfile as WindowsFirewallProfile,
     FirewallProfileState as WindowsProfileState,
 )
-from .errors import WindowsFailureCode, safe_windows_failure_message
+from .errors import (
+    WindowsEndpointTableDiagnostic,
+    WindowsFailureCode,
+    safe_windows_failure_message,
+)
 
 
 MAX_RAW_TEXT = 1024
@@ -219,6 +223,7 @@ T = TypeVar("T")
 class WindowsApiResult(Generic[T]):
     value: T | None = None
     failure: WindowsFailureCode | None = None
+    endpoint_diagnostics: tuple[WindowsEndpointTableDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
         if self.failure is not None and not isinstance(self.failure, WindowsFailureCode):
@@ -229,6 +234,14 @@ class WindowsApiResult(Generic[T]):
             None, WindowsFailureCode.PARTIAL_RESULT
         }:
             raise ValueError("Only a typed partial result may carry data and failure.")
+        if not isinstance(self.endpoint_diagnostics, tuple) or not all(
+            isinstance(item, WindowsEndpointTableDiagnostic)
+            for item in self.endpoint_diagnostics
+        ):
+            raise TypeError("endpoint diagnostics must use immutable typed records.")
+        tables = tuple(item.table for item in self.endpoint_diagnostics)
+        if len(set(tables)) != len(tables):
+            raise ValueError("endpoint diagnostics must identify unique tables.")
 
     @property
     def succeeded(self) -> bool:

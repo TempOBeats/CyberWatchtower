@@ -1,5 +1,6 @@
 """Closed, sanitized failure contract for the internal Windows API boundary."""
 
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -13,6 +14,38 @@ class WindowsFailureCode(str, Enum):
     PROCESS_DISAPPEARED = "PROCESS_DISAPPEARED"
     UNSUPPORTED = "UNSUPPORTED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class WindowsEndpointTable(str, Enum):
+    TCP_IPV4 = "TCP_IPV4"
+    TCP_IPV6 = "TCP_IPV6"
+    UDP_IPV4 = "UDP_IPV4"
+    UDP_IPV6 = "UDP_IPV6"
+
+
+class WindowsEndpointTableResultCode(str, Enum):
+    COMPLETE = "COMPLETE"
+    API_UNAVAILABLE = WindowsFailureCode.API_UNAVAILABLE.value
+    ACCESS_DENIED = WindowsFailureCode.ACCESS_DENIED.value
+    BUFFER_UNSTABLE = WindowsFailureCode.BUFFER_UNSTABLE.value
+    INVALID_RESULT = WindowsFailureCode.INVALID_RESULT.value
+    TIMEOUT = WindowsFailureCode.TIMEOUT.value
+    UNSUPPORTED = WindowsFailureCode.UNSUPPORTED.value
+    INTERNAL_ERROR = WindowsFailureCode.INTERNAL_ERROR.value
+
+
+@dataclass(frozen=True, slots=True)
+class WindowsEndpointTableDiagnostic:
+    """Sanitized table outcome containing no endpoint or native error data."""
+
+    table: WindowsEndpointTable
+    result: WindowsEndpointTableResultCode
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.table, WindowsEndpointTable):
+            raise TypeError("endpoint diagnostic table must use the closed enum.")
+        if not isinstance(self.result, WindowsEndpointTableResultCode):
+            raise TypeError("endpoint diagnostic result must use the closed enum.")
 
 
 _SAFE_MESSAGES = {

@@ -12,7 +12,12 @@ from .buffer import (
     NativeBufferRead,
     read_bounded_native_table,
 )
-from .errors import WindowsFailureCode
+from .errors import (
+    WindowsEndpointTable,
+    WindowsEndpointTableDiagnostic,
+    WindowsEndpointTableResultCode,
+    WindowsFailureCode,
+)
 from .models import (
     RawProcessInfo,
     RawServiceInfo,
@@ -165,16 +170,42 @@ def decode_endpoint_table(
     ))
 
 
+def _endpoint_table(
+    family: WindowsAddressFamily,
+    protocol: str,
+) -> WindowsEndpointTable:
+    return WindowsEndpointTable(f"{protocol.upper()}_{family.value}")
+
+
+def _diagnosed_endpoint_result(
+    table: WindowsEndpointTable,
+    result: WindowsApiResult,
+) -> WindowsApiResult:
+    table_result = (
+        WindowsEndpointTableResultCode.COMPLETE
+        if result.failure is None
+        else WindowsEndpointTableResultCode(result.failure.value)
+    )
+    return WindowsApiResult(
+        result.value,
+        result.failure,
+        (WindowsEndpointTableDiagnostic(table, table_result),),
+    )
+
+
 def _read_endpoint_table(
     family: WindowsAddressFamily,
     protocol: str,
 ) -> WindowsApiResult[tuple[RawTcpEndpoint | RawUdpEndpoint, ...]]:
     import ctypes
 
+    table = _endpoint_table(family, protocol)
     try:
         api = _iphlpapi()
     except _NativeFailure as exc:
-        return WindowsApiResult(failure=exc.code)
+        return _diagnosed_endpoint_result(
+            table, WindowsApiResult(failure=exc.code)
+        )
     function = api.GetExtendedTcpTable if protocol == "tcp" else api.GetExtendedUdpTable
     function.argtypes = [
         ctypes.c_void_p,
@@ -242,17 +273,30 @@ def _read_endpoint_table(
             item.family.value, item.address, item.port, item.pid
         ),
     )
-    if native_failure is not None:
-        return WindowsApiResult(failure=native_failure)
-    return bounded
+    result = (
+        WindowsApiResult(failure=native_failure)
+        if native_failure is not None else bounded
+    )
+    return _diagnosed_endpoint_result(table, result)
 
 
 def _combine_endpoint_results(
     results: tuple[WindowsApiResult[tuple], ...],
 ) -> WindowsApiResult[tuple]:
     entries = tuple(item for result in results for item in (result.value or ()))
-    if len(set(entries)) != len(entries):
+    diagnostics = tuple(
+        diagnostic
+        for result in results
+        for diagnostic in result.endpoint_diagnostics
+    )
+    diagnostic_tables = tuple(item.table for item in diagnostics)
+    if len(set(diagnostic_tables)) != len(diagnostic_tables):
         return WindowsApiResult(failure=WindowsFailureCode.INVALID_RESULT)
+    if len(set(entries)) != len(entries):
+        return WindowsApiResult(
+            failure=WindowsFailureCode.INVALID_RESULT,
+            endpoint_diagnostics=diagnostics,
+        )
     ordered = tuple(sorted(
         entries,
         key=lambda item: (item.family.value, item.address, item.port, item.pid),
@@ -260,9 +304,13 @@ def _combine_endpoint_results(
     failures = tuple(result.failure for result in results if result.failure is not None)
     if failures:
         if ordered:
-            return WindowsApiResult(ordered, WindowsFailureCode.PARTIAL_RESULT)
-        return WindowsApiResult(failure=failures[0])
-    return WindowsApiResult(value=ordered)
+            return WindowsApiResult(
+                ordered, WindowsFailureCode.PARTIAL_RESULT, diagnostics
+            )
+        return WindowsApiResult(
+            failure=failures[0], endpoint_diagnostics=diagnostics
+        )
+    return WindowsApiResult(value=ordered, endpoint_diagnostics=diagnostics)
 
 
 def collect_tcp_endpoints() -> WindowsApiResult[tuple[RawTcpEndpoint, ...]]:

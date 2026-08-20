@@ -27,7 +27,9 @@ def _canonical_result(result, *, key, unique=True):
     ordered = tuple(sorted(result.value, key=key))
     if unique and any(item in ordered[:index] for index, item in enumerate(ordered)):
         raise ValueError("fixture collection contains duplicate native records.")
-    return WindowsApiResult(ordered, result.failure)
+    return WindowsApiResult(
+        ordered, result.failure, result.endpoint_diagnostics
+    )
 
 
 @dataclass(frozen=True, slots=True)
