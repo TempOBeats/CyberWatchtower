@@ -1,4 +1,5 @@
 import ast
+import ctypes
 import dataclasses
 import inspect
 import ipaddress
@@ -7,6 +8,7 @@ import struct
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cyberwatchtower.network import assess_network_exposure
@@ -27,6 +29,7 @@ from cyberwatchtower.platform.windows import (
     WindowsEndpointTable,
     WindowsEndpointTableDiagnostic,
     WindowsEndpointTableResultCode,
+    WindowsEndpointValidationReason,
     WindowsFailureCode,
     WindowsNetworkApiProtocol,
     WindowsServiceState,
@@ -34,8 +37,10 @@ from cyberwatchtower.platform.windows import (
     collect_windows_network,
 )
 from cyberwatchtower.platform.windows.native_network import (
+    _EndpointValidationFailure,
     _diagnosed_endpoint_result,
     _endpoint_table,
+    _read_endpoint_table,
     collect_tcp_endpoints,
     decode_endpoint_table,
 )
@@ -283,6 +288,89 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
             with self.subTest(size=len(data)), self.assertRaises(ValueError):
                 decode_endpoint_table(data, WindowsAddressFamily.IPV4, "tcp")
 
+    def test_udp4_layout_matches_fixed_width_windows_sdk_contract(self):
+        class MibUdpRowOwnerPid(ctypes.Structure):
+            _fields_ = (
+                ("local_address", ctypes.c_uint32),
+                ("local_port", ctypes.c_uint32),
+                ("owning_pid", ctypes.c_uint32),
+            )
+
+        class MibUdpTableOwnerPid(ctypes.Structure):
+            _fields_ = (
+                ("entry_count", ctypes.c_uint32),
+                ("table", MibUdpRowOwnerPid * 1),
+            )
+
+        self.assertEqual(ctypes.sizeof(MibUdpRowOwnerPid), 12)
+        self.assertEqual(ctypes.alignment(MibUdpRowOwnerPid), 4)
+        self.assertEqual(MibUdpTableOwnerPid.table.offset, 4)
+        self.assertEqual(
+            tuple(getattr(MibUdpRowOwnerPid, name).offset for name in (
+                "local_address", "local_port", "owning_pid"
+            )),
+            (0, 4, 8),
+        )
+
+    def test_udp4_validation_branches_have_closed_sanitized_reasons(self):
+        zero_port_row = struct.pack("<3I", 0, 0, 4)
+        duplicate_row = struct.pack(
+            "<3I", 0, self._native_port(53), 4
+        )
+        cases = (
+            (b"", WindowsEndpointValidationReason.TABLE_HEADER_INVALID),
+            (
+                struct.pack("<I", 65_537),
+                WindowsEndpointValidationReason.ENTRY_COUNT_INVALID,
+            ),
+            (
+                struct.pack("<I", 1),
+                WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH,
+            ),
+            (
+                struct.pack("<I", 1) + zero_port_row,
+                WindowsEndpointValidationReason.PORT_ENCODING_INVALID,
+            ),
+            (
+                struct.pack("<I", 2) + duplicate_row + duplicate_row,
+                WindowsEndpointValidationReason.DUPLICATE_ROWS,
+            ),
+        )
+        for data, expected in cases:
+            with self.subTest(reason=expected), self.assertRaises(
+                _EndpointValidationFailure
+            ) as raised:
+                decode_endpoint_table(data, WindowsAddressFamily.IPV4, "udp")
+            self.assertEqual(raised.exception.reason, expected)
+
+    def test_udp4_native_invalid_result_retains_only_validation_category(self):
+        payload = struct.pack("<I3I", 1, 0, 0, 4)
+
+        class FixedNativeTable:
+            def __call__(self, buffer, size_pointer, *_args):
+                size_pointer._obj.value = len(payload)
+                if buffer is None:
+                    return 122
+                ctypes.memmove(buffer, payload, len(payload))
+                return 0
+
+        native_call = FixedNativeTable()
+        api = SimpleNamespace(GetExtendedUdpTable=native_call)
+        with patch(
+            "cyberwatchtower.platform.windows.native_network._iphlpapi",
+            return_value=api,
+        ):
+            result = _read_endpoint_table(WindowsAddressFamily.IPV4, "udp")
+
+        self.assertEqual(result.failure, WindowsFailureCode.INVALID_RESULT)
+        self.assertEqual(result.endpoint_diagnostics, (
+            WindowsEndpointTableDiagnostic(
+                WindowsEndpointTable.UDP_IPV4,
+                WindowsEndpointTableResultCode.INVALID_RESULT,
+                WindowsEndpointValidationReason.PORT_ENCODING_INVALID,
+            ),
+        ))
+
     def test_one_family_failure_is_a_typed_partial_protocol_result(self):
         endpoint = RawTcpEndpoint(
             WindowsAddressFamily.IPV4, "0.0.0.0", 80, 4,
@@ -353,10 +441,11 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
                 WindowsEndpointTableDiagnostic
             )
         }
-        self.assertEqual(fields, {"table", "result"})
+        self.assertEqual(fields, {"table", "result", "reason"})
         diagnostic = WindowsEndpointTableDiagnostic(
             WindowsEndpointTable.UDP_IPV6,
             WindowsEndpointTableResultCode.INVALID_RESULT,
+            WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH,
         )
         rendered = repr(diagnostic)
         for canary in (
