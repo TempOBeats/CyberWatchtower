@@ -25,7 +25,7 @@ block-all-inbound state. These immutable values are observations only. Adapters
 must not assign findings, severity, scores, recommendations, approvals, or model
 evidence.
 
-Report schema 1.3 declares `assessment_domains` explicitly and can carry closed
+Report schema 1.4 declares `assessment_domains` explicitly and can carry closed
 listener bind/reachability metadata. Assurance is derived only from applicable
 domains. Reports without applicability retain the original conservative
 Linux-era domain set, and schema 1.0 through 1.2 history is read exactly as
@@ -34,6 +34,13 @@ domain is independent of
 the retained `iptables_input_policy` domain. New neutral firewall-policy finding
 sources map explicitly to the former; legacy Linux firewall sources retain their
 existing coverage mapping.
+
+Schema 1.4 also records an explicit scoring version. Current production scans
+continue to use Scoring v1. An explicitly supplied Scoring v2 result may carry a
+closed deterministic penalty breakdown for future integration. Older reports
+without a scoring version normalize as v1 and retain their stored score and risk
+level without recomputation. Cross-version score comparisons are methodology
+changes, not posture improvements or regressions.
 
 Socket bind exposure and remote reachability are separate contracts. A wildcard
 or interface bind is an observed fact, while reachability is a deterministic
