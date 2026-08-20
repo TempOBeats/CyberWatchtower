@@ -15,12 +15,16 @@ def render_advisory(advisory: AdvisoryReport, context: AdvisorContext) -> str:
         "MOST IMPORTANT FINDINGS",
     ]
 
-    if advisory.important_finding_ids:
-        for finding_id in advisory.important_finding_ids:
-            finding = findings_by_id[finding_id]
+    if advisory.finding_groups:
+        for group in advisory.finding_groups[:5]:
+            finding = findings_by_id[group.finding_ids[0]]
+            related = (
+                f" ({len(group.finding_ids)} related listeners)"
+                if len(group.finding_ids) > 1 else ""
+            )
             lines.append(
                 f"- [{finding.severity}/{finding.assessment_state.value}] "
-                f"{finding.title}"
+                f"{finding.title}{related}"
             )
     else:
         lines.append("- No current risk or coverage-gap findings to prioritize.")

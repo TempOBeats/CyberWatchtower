@@ -1,6 +1,14 @@
+import hashlib
+
 from cyberwatchtower.models import AssessmentState, FindingKind
 
-from .models import AdvisoryAction, AdvisoryFinding, AdvisoryReport, AdvisorContext
+from .models import (
+    AdvisoryAction,
+    AdvisoryFinding,
+    AdvisoryFindingGroup,
+    AdvisoryReport,
+    AdvisorContext,
+)
 
 
 SEVERITY_PRIORITY = {
@@ -95,6 +103,55 @@ def _finding_rationale(finding: AdvisoryFinding) -> str:
     return rationale
 
 
+def _group_key(finding: AdvisoryFinding) -> tuple[str, ...]:
+    if finding.presentation_group_id:
+        return ("presentation", finding.presentation_group_id)
+    return ("finding", finding.finding_id)
+
+
+def _group_id(key: tuple[str, ...]) -> str:
+    return "presentation:" + hashlib.sha256("\0".join(key).encode()).hexdigest()
+
+
+def _groups(findings: list[AdvisoryFinding]) -> tuple[tuple[AdvisoryFinding, ...], ...]:
+    grouped: dict[tuple[str, ...], list[AdvisoryFinding]] = {}
+    for finding in findings:
+        grouped.setdefault(_group_key(finding), []).append(finding)
+    groups = tuple(
+        tuple(sorted(items, key=lambda item: item.finding_id))
+        for items in grouped.values()
+    )
+    return tuple(sorted(
+        groups,
+        key=lambda items: finding_priority_key(max(items, key=finding_priority_key)),
+        reverse=True,
+    ))
+
+
+def _presentation_groups(
+    findings: list[AdvisoryFinding],
+) -> tuple[AdvisoryFindingGroup, ...]:
+    result = []
+    for items in _groups(findings):
+        representative = max(items, key=finding_priority_key)
+        result.append(AdvisoryFindingGroup(
+            _group_id(_group_key(representative)),
+            tuple(item.finding_id for item in items),
+            representative.title,
+            representative.severity,
+            representative.assessment_state,
+        ))
+    return tuple(sorted(
+        result,
+        key=lambda group: (
+            SEVERITY_PRIORITY.get(group.severity, 0),
+            STATE_PRIORITY[group.assessment_state],
+            group.group_id,
+        ),
+        reverse=True,
+    ))
+
+
 def _build_actions(findings: tuple[AdvisoryFinding, ...]) -> tuple[AdvisoryAction, ...]:
     actionable = [
         finding
@@ -104,20 +161,32 @@ def _build_actions(findings: tuple[AdvisoryFinding, ...]) -> tuple[AdvisoryActio
     actionable.sort(key=finding_priority_key, reverse=True)
     actions = []
 
-    for priority, finding in enumerate(actionable, start=1):
+    for priority, items in enumerate(_groups(actionable), start=1):
+        finding = max(items, key=finding_priority_key)
         action_text = finding.recommendation.strip() or (
             f"Review the deterministic finding: {finding.title}."
         )
+        finding_ids = tuple(item.finding_id for item in items)
+        action_id = (
+            f"action:{finding.finding_id}"
+            if len(items) == 1
+            else "action-group:" + hashlib.sha256(
+                "\0".join(finding_ids).encode()
+            ).hexdigest()
+        )
+        rationale = _finding_rationale(finding)
+        if len(items) > 1:
+            rationale += f" This action covers {len(items)} related listener findings."
         actions.append(
             AdvisoryAction(
-                action_id=f"action:{finding.finding_id}",
+                action_id=action_id,
                 priority=priority,
-                finding_ids=(finding.finding_id,),
+                finding_ids=finding_ids,
                 action=action_text,
-                rationale=_finding_rationale(finding),
+                rationale=rationale,
                 assessment_state=finding.assessment_state,
-                is_new=finding.is_new,
-                is_recurring=finding.is_recurring,
+                is_new=any(item.is_new for item in items),
+                is_recurring=any(item.is_recurring for item in items),
             )
         )
 
@@ -159,10 +228,15 @@ def _recurring_summary(context: AdvisorContext) -> str:
         return "No current finding has recurred across multiple scans."
 
     recurring.sort(key=finding_priority_key, reverse=True)
-    descriptions = [
-        f"{finding.title} ({finding.occurrences} scans)"
-        for finding in recurring[:3]
-    ]
+    descriptions = []
+    for items in _groups(recurring)[:3]:
+        representative = max(items, key=finding_priority_key)
+        suffix = (
+            f"; {len(items)} related listeners" if len(items) > 1 else ""
+        )
+        descriptions.append(
+            f"{representative.title} ({max(item.occurrences for item in items)} scans{suffix})"
+        )
     return "Recurring problems: " + "; ".join(descriptions) + "."
 
 
@@ -179,6 +253,7 @@ def build_deterministic_advisory(context: AdvisorContext) -> AdvisoryReport:
         key=finding_priority_key,
         reverse=True,
     )
+    presentation_groups = _presentation_groups(important)
     finding_warnings = tuple(
         finding.title
         for finding in context.findings
@@ -206,4 +281,5 @@ def build_deterministic_advisory(context: AdvisorContext) -> AdvisoryReport:
         recurring_summary=_recurring_summary(context),
         next_steps=next_steps,
         coverage_warnings=coverage_warnings,
+        finding_groups=presentation_groups,
     )

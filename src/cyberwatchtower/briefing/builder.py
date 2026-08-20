@@ -68,24 +68,44 @@ def build_security_briefing(
     ]
     findings_by_id = {finding.finding_id: finding for finding in context.findings}
     priority_claims = []
-    for finding_id in advisory.important_finding_ids:
-        finding = findings_by_id[finding_id]
-        evidence_id = f"finding:{finding_id}"
-        evidence.append(make_evidence_ref(
-            evidence_id,
-            EvidenceSource.DETERMINISTIC_FINDING,
-            finding_id,
-            EpistemicRole.OBSERVED_FACT,
-            finding.title,
-        ))
+    for group in advisory.finding_groups[:5]:
+        finding = findings_by_id[group.finding_ids[0]]
+        evidence_ids = []
+        for finding_id in group.finding_ids:
+            member = findings_by_id[finding_id]
+            evidence_id = f"finding:{finding_id}"
+            evidence.append(make_evidence_ref(
+                evidence_id,
+                EvidenceSource.DETERMINISTIC_FINDING,
+                finding_id,
+                EpistemicRole.OBSERVED_FACT,
+                member.title,
+            ))
+            evidence_ids.append(evidence_id)
+            if member.reachability_state:
+                reachability_id = f"reachability:{finding_id}"
+                evidence.append(make_evidence_ref(
+                    reachability_id,
+                    EvidenceSource.DETERMINISTIC_INTERPRETATION,
+                    finding_id,
+                    EpistemicRole.DETERMINISTIC_DERIVATION,
+                    member.reachability_state,
+                ))
+                evidence_ids.append(reachability_id)
         uncertainty = (
             " (legacy metadata normalized conservatively; not confirmed)"
             if finding.metadata_inferred else ""
         )
-        priority_claims.append(_claim(
-            f"priority:{finding_id}",
-            f"[{finding.severity}/{finding.assessment_state.value}] {finding.title}{uncertainty}",
-            evidence_id,
+        related = (
+            f" ({len(group.finding_ids)} related listeners)"
+            if len(group.finding_ids) > 1 else ""
+        )
+        priority_claims.append(Claim(
+            f"priority:{group.group_id}",
+            f"[{finding.severity}/{finding.assessment_state.value}] "
+            f"{finding.title}{related}{uncertainty}",
+            EpistemicRole.DETERMINISTIC_DERIVATION,
+            tuple(evidence_ids),
         ))
 
     action_claims = []

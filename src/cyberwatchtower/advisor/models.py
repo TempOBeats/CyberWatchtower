@@ -25,6 +25,10 @@ class AdvisoryFinding:
     is_new: bool = False
     occurrences: int = 0
     metadata_inferred: bool = False
+    bind_exposure: str | None = None
+    reachability_state: str | None = None
+    reachability_basis: tuple[str, ...] = ()
+    presentation_group_id: str | None = None
 
     @property
     def is_recurring(self) -> bool:
@@ -71,6 +75,15 @@ class AdvisoryAction:
 
 
 @dataclass(frozen=True)
+class AdvisoryFindingGroup:
+    group_id: str
+    finding_ids: tuple[str, ...]
+    title: str
+    severity: str
+    assessment_state: AssessmentState
+
+
+@dataclass(frozen=True)
 class AdvisoryReport:
     mode: str
     posture_summary: str
@@ -80,4 +93,5 @@ class AdvisoryReport:
     recurring_summary: str
     next_steps: tuple[str, ...]
     coverage_warnings: tuple[str, ...]
+    finding_groups: tuple[AdvisoryFindingGroup, ...]
     provider_warning: str | None = None

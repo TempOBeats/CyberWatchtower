@@ -3,6 +3,8 @@ from collections.abc import Mapping
 from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.models import AssessmentState, FindingKind
 from cyberwatchtower.report_contracts import assessment_assurance_summary
+from cyberwatchtower.reachability import reachability_from_report
+from cyberwatchtower.presentation import listener_group_id_from_values
 
 from .models import AdvisoryFinding, AdvisorContext, ChangeFinding
 
@@ -97,6 +99,12 @@ def build_advisor_context(
     for raw_finding in current_report.get("findings", []):
         finding_id = finding_identity(dict(raw_finding))
         safe_evidence, evidence_values = _safe_evidence(raw_finding)
+        try:
+            reachability = reachability_from_report(
+                raw_finding.get("network_context")
+            )
+        except ValueError:
+            reachability = None
         findings.append(
             AdvisoryFinding(
                 finding_id=finding_id,
@@ -127,6 +135,29 @@ def build_advisor_context(
                 is_new=finding_id in new_ids,
                 occurrences=occurrences.get(finding_id, 0),
                 metadata_inferred=not _has_valid_metadata(raw_finding),
+                bind_exposure=(
+                    reachability.bind_exposure.value if reachability else None
+                ),
+                reachability_state=(
+                    reachability.state.value if reachability else None
+                ),
+                reachability_basis=(
+                    tuple(item.value for item in reachability.evidence_basis)
+                    if reachability else ()
+                ),
+                presentation_group_id=(
+                    listener_group_id_from_values(
+                        evidence_values.get("application")
+                        or evidence_values.get("service/application")
+                        or evidence_values.get("process")
+                        or "unknown",
+                        evidence_values.get("protocol", "unknown"),
+                        evidence_values.get("port", "unknown"),
+                        reachability.bind_exposure.value,
+                        reachability.state.value,
+                        str(raw_finding.get("recommendation", "")),
+                    ) if reachability else None
+                ),
             )
         )
 
