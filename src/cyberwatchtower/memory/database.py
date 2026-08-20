@@ -168,6 +168,26 @@ def validate_memory_database(connection: sqlite3.Connection) -> None:
                 f"Memory schema is incomplete; missing tables={sorted(missing_tables)}, "
                 f"indexes={sorted(missing_indexes)}."
             )
+        score_columns = {
+            row["name"]: row
+            for row in connection.execute("PRAGMA table_info(score_history)")
+        }
+        scoring_version = score_columns.get("scoring_version")
+        if (
+            scoring_version is None
+            or int(scoring_version["notnull"]) != 1
+            or scoring_version["dflt_value"] not in ("'1'", '"1"')
+        ):
+            raise MemoryIntegrityError(
+                "Memory score history lacks the required scoring-version contract."
+            )
+        invalid_score_versions = connection.execute(
+            "SELECT COUNT(*) FROM score_history WHERE scoring_version NOT IN ('1', '2')"
+        ).fetchone()[0]
+        if invalid_score_versions:
+            raise MemoryIntegrityError(
+                "Memory score history contains an unsupported scoring version."
+            )
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise MemoryIntegrityError("Memory schema contains foreign-key violations.")
