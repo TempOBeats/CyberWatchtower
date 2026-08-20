@@ -212,10 +212,17 @@ def decode_endpoint_table(
                 family, normalized_address, normalized_port, pid
             )
         entries.append(entry)
-    if len(set(entries)) != len(entries):
-        raise _EndpointValidationFailure(
-            WindowsEndpointValidationReason.DUPLICATE_ROWS
-        )
+    unique_entries = set(entries)
+    if len(unique_entries) != len(entries):
+        if protocol == "udp" and family == WindowsAddressFamily.IPV4:
+            # MIB_UDPROW_OWNER_PID exposes no socket-instance discriminator.
+            # Multiple native rows can therefore project to one semantic
+            # address/port/PID endpoint without making the table malformed.
+            entries = list(unique_entries)
+        else:
+            raise _EndpointValidationFailure(
+                WindowsEndpointValidationReason.DUPLICATE_ROWS
+            )
     return tuple(sorted(
         entries,
         key=lambda item: (item.family.value, item.address, item.port, item.pid),
