@@ -281,7 +281,7 @@ class LinuxAdapterContractTests(unittest.TestCase):
                 ],
             },
         })
-        self.assertEqual(result["score"]["score"], 90)
+        self.assertEqual(result["score"]["score"], 96)
         self.assertEqual(result["score"]["risk_level"], "LOW")
         self.assertEqual(result["assessment_assurance"]["level"], "PARTIAL")
 
@@ -293,7 +293,7 @@ class LinuxAdapterContractTests(unittest.TestCase):
         cases = (
             ({"available": True, "accessible": True,
               "policies": {"INPUT": "ACCEPT", "FORWARD": "DROP", "OUTPUT": "ACCEPT"}},
-             "COMPLETE", "MEDIUM", "RISK", "CONFIRMED", 90),
+             "COMPLETE", "MEDIUM", "RISK", "CONFIRMED", 89),
             ({"available": True, "accessible": True, "policies": {}},
              "INCOMPLETE", "INFO", "COVERAGE_GAP", "INCOMPLETE", 100),
             ({"available": True, "accessible": False,

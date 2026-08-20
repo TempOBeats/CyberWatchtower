@@ -185,7 +185,7 @@ class WindowsReachabilityIntegrationTests(unittest.TestCase):
             "address=0.0.0.0|application=windows-service:demosvc|port=8080|"
             "process=python.exe|protocol=tcp"
         ))
-        self.assertEqual(self.scan()["score"]["score"], 90)
+        self.assertEqual(self.scan()["score"]["score"], 96)
 
     def test_partial_endpoint_coverage_is_separate_from_reachability(self):
         from cyberwatchtower.platform.windows import WindowsFailureCode

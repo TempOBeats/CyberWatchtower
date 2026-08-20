@@ -86,7 +86,7 @@ class SocketInspectionTests(unittest.TestCase):
         self.assertEqual(result["failure_code"], "SOCKET_COMMAND_FAILED")
         self.assertNotIn("error", result)
 
-    def test_incomplete_inspection_prevents_perfect_score(self):
+    def test_incomplete_inspection_lowers_assurance_not_v2_score(self):
         network_result = {
             "available": True,
             "accessible": False,
@@ -111,7 +111,8 @@ class SocketInspectionTests(unittest.TestCase):
         ):
             result = _run_linux_fixture_scan()
 
-        self.assertLess(result["score"]["score"], 100)
+        self.assertEqual(result["score"]["score"], 100)
+        self.assertEqual(result["assessment_assurance"]["level"], "PARTIAL")
         self.assertEqual(
             result["coverage"][ScanDomain.NETWORK_SOCKET_INSPECTION.value],
             CoverageState.INCOMPLETE.value,

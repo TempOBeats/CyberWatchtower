@@ -116,11 +116,12 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
             "network_reachability": "INCOMPLETE",
         })
         self.assertEqual(result["assessment_assurance"]["level"], "PARTIAL")
-        self.assertEqual(result["score"], {
-            "score": 90, "risk_level": "LOW",
-            "counts": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 1,
-                       "LOW": 0, "INFO": 2},
-        })
+        self.assertEqual(
+            (result["score"]["scoring_version"], result["score"]["score"],
+             result["score"]["risk_level"], result["score"]["counts"]),
+            ("2", 96, "LOW", {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 1,
+                                "LOW": 0, "INFO": 2}),
+        )
         self.assertEqual(
             [(item["title"], item["severity"], item["kind"],
               item["assessment_state"], item["confidence"])

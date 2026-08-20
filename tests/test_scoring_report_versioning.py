@@ -260,12 +260,12 @@ class ScoringReportContractTests(unittest.TestCase):
             )
         self.assertNotIn(canary, json.dumps(report["security_score"]))
 
-    def test_production_scanner_still_uses_v1_and_v2_remains_callable(self):
+    def test_production_scanner_uses_v2_and_v1_remains_callable(self):
         import cyberwatchtower.scanner as scanner
 
         scanner_source = inspect.getsource(scanner)
-        self.assertIn("from .scoring import calculate_security_score", scanner_source)
-        self.assertNotIn("scoring_v2", scanner_source)
+        self.assertNotIn("from .scoring import calculate_security_score", scanner_source)
+        self.assertIn("from .scoring_v2 import calculate_security_score_v2", scanner_source)
         legacy = calculate_security_score([])
         v2 = calculate_security_score_v2(())
         self.assertEqual(legacy["score"], 100)

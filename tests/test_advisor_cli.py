@@ -128,6 +128,48 @@ class AdvisorRenderingTests(unittest.TestCase):
         self.assertIn("Advisor unavailable", output.getvalue())
         self.assertIn("scan complete", output.getvalue())
 
+    def test_main_renders_scoring_methodology_transition_without_numeric_delta(self):
+        counts = {
+            "CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0,
+        }
+        previous = {
+            "generated_at": "2026-08-19T00:00:00+00:00",
+            "system": {"hostname": "test-host"},
+            "security_score": {
+                "scoring_version": "1", "score": 0,
+                "risk_level": "CRITICAL", "counts": counts,
+            },
+            "findings": [],
+        }
+        current = {
+            "generated_at": "2026-08-20T00:00:00+00:00",
+            "system": {"hostname": "test-host"},
+            "security_score": {
+                "scoring_version": "2", "score": 82,
+                "risk_level": "MODERATE", "counts": counts,
+            },
+            "findings": [],
+        }
+        results = {
+            "system": {"hostname": "test-host"}, "firewall": {},
+            "findings": [], "score": current["security_score"],
+        }
+        output = io.StringIO()
+        with (
+            patch("cyberwatchtower.cli.run_scan", return_value=results),
+            patch("cyberwatchtower.cli.save_json_report", return_value="report.json"),
+            patch("cyberwatchtower.cli.load_reports", return_value=[previous, current]),
+            patch("cyberwatchtower.cli._display_advisor"),
+            patch("cyberwatchtower.cli._ingest_saved_report", return_value=None),
+            redirect_stdout(output),
+        ):
+            main()
+        rendered = output.getvalue()
+        self.assertIn("Change: N/A", rendered)
+        self.assertIn("Trend: SCORING_VERSION_CHANGED", rendered)
+        self.assertNotIn("Change: +82", rendered)
+        self.assertIn("Average Score: N/A", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
