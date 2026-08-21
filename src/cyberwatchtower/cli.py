@@ -271,10 +271,13 @@ def main(argv=None):
             print(f"Description: {finding.description}")
             print(f"Confidence: {finding.confidence}%")
             print(f"Recommendation: {finding.recommendation}")
-            if finding.runtime_instance_count > 1:
+            runtime_instances = sum(
+                item.runtime_instance_count for item in group.findings
+            )
+            if runtime_instances > len(group.findings):
                 print(
                     "Multiple runtime instances observed: "
-                    f"{finding.runtime_instance_count}"
+                    f"{runtime_instances}"
                 )
 
             if finding.evidence:
@@ -361,10 +364,27 @@ def main(argv=None):
             print("NEW FINDINGS")
             print("------------")
 
-            for finding in comparison["new_findings"]:
+            from .presentation import group_report_findings
+            for group in group_report_findings(comparison["new_findings"]):
+                finding = group.findings[0]
+                print()
                 print(f"[{finding['severity']}] {finding['title']}")
-                if finding.get("evidence"):
-                    for item in finding["evidence"]:
+                if len(group.findings) > 1:
+                    print(f"Related listener findings: {len(group.findings)}")
+                runtime_instances = sum(
+                    int(item.get("runtime_instance_count", 1))
+                    for item in group.findings
+                )
+                if runtime_instances > len(group.findings):
+                    print(f"Multiple runtime instances observed: {runtime_instances}")
+                evidence = tuple(dict.fromkeys(
+                    item
+                    for member in group.findings
+                    for item in member.get("evidence", ())
+                ))
+                if evidence:
+                    print("Evidence:")
+                    for item in evidence:
                         print(f" - {item}")
 
         if comparison["resolved_findings"]:
@@ -422,19 +442,18 @@ def main(argv=None):
         print("RECURRING FINDINGS")
         print("==================")
 
-        grouped_recurring = {}
-        for finding in recurring:
-            key = finding.get("presentation_group_id") or finding["finding_id"]
-            grouped_recurring.setdefault(key, []).append(finding)
-        for group in grouped_recurring.values():
+        from .presentation import group_report_findings
+        for group_record in group_report_findings(recurring):
+            group = group_record.findings
             finding = group[0]
             related = (
                 f", {len(group)} related listeners" if len(group) > 1 else ""
             )
+            total_occurrences = sum(item["occurrences"] for item in group)
             print(
                 f"[{finding['severity']}] {finding['title']} "
                 f"({max(item['occurrences'] for item in group)} occurrences"
-                f"{related})"
+                f"{related}, {total_occurrences} atomic occurrences)"
             )
 
     _display_advisor(reports[-1], comparison, intelligence)

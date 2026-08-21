@@ -16,6 +16,14 @@ class FindingPresentationGroup:
     findings: tuple[Finding, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ReportFindingPresentationGroup:
+    """Read-only presentation group retaining every authoritative report item."""
+
+    group_id: str
+    findings: tuple[dict, ...]
+
+
 def listener_group_id(
     service: dict,
     reachability: ReachabilityAssessment,
@@ -105,4 +113,33 @@ def report_listener_group_id(finding: dict) -> str | None:
         reachability.bind_exposure.value,
         reachability.state.value,
         str(finding.get("recommendation", "")),
+    )
+
+
+def group_report_findings(
+    findings: list[dict],
+) -> tuple[ReportFindingPresentationGroup, ...]:
+    """Group report findings for display without changing their stored records."""
+
+    grouped: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for index, finding in enumerate(findings):
+        key = (
+            finding.get("presentation_group_id")
+            or report_listener_group_id(finding)
+            or f"atomic:{finding.get('finding_id', index)}"
+        )
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(finding)
+    return tuple(
+        ReportFindingPresentationGroup(
+            key,
+            tuple(sorted(
+                grouped[key],
+                key=lambda item: str(item.get("finding_id", "")),
+            )),
+        )
+        for key in order
     )
