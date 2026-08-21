@@ -110,6 +110,11 @@ def _print_top_level_help() -> None:
         help="optionally ingest a completed scan into Persistent Security Memory",
     )
     parser.add_argument(
+        "--score-details",
+        action="store_true",
+        help="show the full safe deterministic Scoring v2 breakdown",
+    )
+    parser.add_argument(
         "command",
         nargs="?",
         choices=("briefing", "ask", "memory"),
@@ -214,6 +219,13 @@ def main(argv=None):
         _run_intelligence_command(arguments)
         return
 
+    score_details = False
+    if "--score-details" in arguments:
+        if arguments.count("--score-details") != 1:
+            raise SystemExit("--score-details may be specified once")
+        arguments.remove("--score-details")
+        score_details = True
+
     print()
     print("================================")
     print("        CYBERWATCHTOWER")
@@ -290,7 +302,9 @@ def main(argv=None):
     if score_explanation is not None:
         print("Score Explanation:")
         for line in render_score_explanation(
-            score_explanation, assurance.get("level", "INCOMPLETE")
+            score_explanation,
+            assurance.get("level", "INCOMPLETE"),
+            detailed=score_details,
         ):
             print(f" - {line}")
 
