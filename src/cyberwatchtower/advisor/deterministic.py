@@ -100,28 +100,55 @@ def _finding_rationale(finding: AdvisoryFinding) -> str:
         rationale += " This finding is new since the previous scan."
     if finding.is_recurring:
         rationale += f" It has appeared in {finding.occurrences} scans."
-    if finding.runtime_instance_count > 1:
-        rationale += (
-            " Multiple runtime instances were observed: "
-            f"{finding.runtime_instance_count}. This does not increase risk by itself."
-        )
     return rationale
 
 
-def _group_key(finding: AdvisoryFinding) -> tuple[str, ...]:
+def _presentation_group_key(finding: AdvisoryFinding) -> tuple[str, ...]:
     if finding.presentation_group_id:
         return ("presentation", finding.presentation_group_id)
     return ("finding", finding.finding_id)
+
+
+def _action_group_key(finding: AdvisoryFinding) -> tuple[str, ...]:
+    """Group equivalent controls using structured facts, never finding titles."""
+
+    if not finding.reachability_state:
+        return ("finding", finding.finding_id)
+    subject = (
+        finding.application
+        or finding.application_name
+        or finding.process
+        or "unknown"
+    ).strip().casefold()
+    key = (
+        "listener-control",
+        finding.source,
+        subject,
+        finding.recommendation.strip(),
+        finding.reachability_state,
+        finding.kind.value,
+        finding.assessment_state.value,
+    )
+    if subject == "unknown":
+        return (
+            *key,
+            (finding.protocol or "unknown").casefold(),
+            finding.port or "unknown",
+        )
+    return key
 
 
 def _group_id(key: tuple[str, ...]) -> str:
     return "presentation:" + hashlib.sha256("\0".join(key).encode()).hexdigest()
 
 
-def _groups(findings: list[AdvisoryFinding]) -> tuple[tuple[AdvisoryFinding, ...], ...]:
+def _groups(
+    findings: list[AdvisoryFinding],
+    key_function=_presentation_group_key,
+) -> tuple[tuple[AdvisoryFinding, ...], ...]:
     grouped: dict[tuple[str, ...], list[AdvisoryFinding]] = {}
     for finding in findings:
-        grouped.setdefault(_group_key(finding), []).append(finding)
+        grouped.setdefault(key_function(finding), []).append(finding)
     groups = tuple(
         tuple(sorted(items, key=lambda item: item.finding_id))
         for items in grouped.values()
@@ -140,7 +167,7 @@ def _presentation_groups(
     for items in _groups(findings):
         representative = max(items, key=finding_priority_key)
         result.append(AdvisoryFindingGroup(
-            _group_id(_group_key(representative)),
+            _group_id(_presentation_group_key(representative)),
             tuple(item.finding_id for item in items),
             representative.title,
             representative.severity,
@@ -166,7 +193,9 @@ def _build_actions(findings: tuple[AdvisoryFinding, ...]) -> tuple[AdvisoryActio
     actionable.sort(key=finding_priority_key, reverse=True)
     actions = []
 
-    for priority, items in enumerate(_groups(actionable), start=1):
+    for priority, items in enumerate(
+        _groups(actionable, _action_group_key), start=1
+    ):
         finding = max(items, key=finding_priority_key)
         action_text = finding.recommendation.strip() or (
             f"Review the deterministic finding: {finding.title}."
@@ -182,6 +211,12 @@ def _build_actions(findings: tuple[AdvisoryFinding, ...]) -> tuple[AdvisoryActio
         rationale = _finding_rationale(finding)
         if len(items) > 1:
             rationale += f" This action covers {len(items)} related listener findings."
+        runtime_instances = sum(item.runtime_instance_count for item in items)
+        if runtime_instances > len(items):
+            rationale += (
+                " Multiple runtime instances were observed: "
+                f"{runtime_instances}. This does not increase risk by itself."
+            )
         actions.append(
             AdvisoryAction(
                 action_id=action_id,
