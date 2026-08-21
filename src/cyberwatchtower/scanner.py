@@ -19,6 +19,10 @@ from .scoring_projection import (
 )
 from .scoring_report import serialize_scoring_result
 from .scoring_v2 import calculate_security_score_v2
+from .network_canonicalization import (
+    NetworkFindingCandidate,
+    canonicalize_network_findings,
+)
 from .report_contracts import (
     CoverageState,
     LEGACY_ASSESSMENT_DOMAINS,
@@ -139,6 +143,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
 
     findings = []
     network_scoring_identities = {}
+    network_candidates = []
     coverage = {
         domain.value: CoverageState.UNKNOWN.value
         for domain in assessment_domains
@@ -184,9 +189,18 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
                     "presentation_group_id"
                 ],
             )
+            network_candidates.append(NetworkFindingCandidate(
+                finding,
+                network_scoring_identity(network_finding["scoring_context"]),
+                network_finding["runtime_pid"],
+            ))
+
+        for finding, scoring_identity in canonicalize_network_findings(
+            tuple(network_candidates)
+        ):
             findings.append(finding)
             network_scoring_identities[canonical_finding_id(finding)] = (
-                network_scoring_identity(network_finding["scoring_context"])
+                scoring_identity
             )
 
         if network_result.coverage != CoverageState.COMPLETE:

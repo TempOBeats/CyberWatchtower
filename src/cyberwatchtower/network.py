@@ -275,6 +275,7 @@ def assess_network_exposure(
                     "presentation_group_id": listener_group_id(
                         service, reachability, risk["recommendation"]
                     ),
+                    "runtime_pid": pid,
                 }
             )
 
