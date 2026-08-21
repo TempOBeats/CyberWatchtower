@@ -266,6 +266,7 @@ class LinuxAdapterContractTests(unittest.TestCase):
             "source": "network",
             "kind": "RISK",
             "assessment_state": "POTENTIAL",
+            "runtime_instance_count": 1,
             "finding_id": (
                 "type=alternate http service listening on all interfaces|"
                 "address=0.0.0.0|application=/usr/bin/wsdd|port=8080|"

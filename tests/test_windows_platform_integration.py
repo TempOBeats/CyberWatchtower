@@ -228,7 +228,7 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
         for boundary in (durable, repr(context), repr(provider), repr(core)):
             self.assertNotIn("phase5-machine-guid", boundary)
             self.assertNotIn("canary-secret", boundary)
-        self.assertEqual(report["schema_version"], "1.4")
+        self.assertEqual(report["schema_version"], "1.5")
         self.assertEqual(report["assessment_domains"], result["assessment_domains"])
 
     def test_report_history_and_memory_use_existing_schema_and_coverage_rules(self):

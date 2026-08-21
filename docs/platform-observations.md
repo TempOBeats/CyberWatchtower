@@ -25,7 +25,7 @@ block-all-inbound state. These immutable values are observations only. Adapters
 must not assign findings, severity, scores, recommendations, approvals, or model
 evidence.
 
-Report schema 1.4 declares `assessment_domains` explicitly and can carry closed
+Report schema 1.5 declares `assessment_domains` explicitly and can carry closed
 listener bind/reachability metadata. Assurance is derived only from applicable
 domains. Reports without applicability retain the original conservative
 Linux-era domain set, and schema 1.0 through 1.2 history is read exactly as
@@ -35,8 +35,9 @@ the retained `iptables_input_policy` domain. New neutral firewall-policy finding
 sources map explicitly to the former; legacy Linux firewall sources retain their
 existing coverage mapping.
 
-Schema 1.4 also records an explicit scoring version. Current production scans
-use Scoring v2 and carry its closed deterministic penalty breakdown. Advisor,
+Schema 1.5 retains the scoring-version contract introduced in schema 1.4.
+Current production scans use Scoring v2 and carry its closed deterministic
+penalty breakdown. Advisor,
 briefing, and CLI score explanations validate and present that canonical
 breakdown; they do not recalculate penalties. Category saturation and confirmed-
 severity guardrail adjustments remain explicit, and assessment assurance is
@@ -44,6 +45,15 @@ shown separately from risk score. Older reports
 without a scoring version normalize as v1 and retain their stored score and risk
 level without recomputation. Cross-version score comparisons are methodology
 changes, not posture improvements or regressions.
+
+Schema 1.5 adds `runtime_instance_count` to every canonical finding. Multiple
+PID-distinct listener observations are represented by one stable security
+condition only when every durable finding and scoring semantic is equal. The
+bounded count is presentation metadata: it is excluded from finding and scoring
+identity, never multiplies score, and contains no PID or endpoint-member list.
+Schemas 1.0 through 1.4 normalize a missing count to one. Canonical JSON remains
+the durable source for multiplicity; memory lifecycle continues to store one
+occurrence per stable condition per report without a SQLite migration.
 
 Socket bind exposure and remote reachability are separate contracts. A wildcard
 or interface bind is an observed fact, while reachability is a deterministic
