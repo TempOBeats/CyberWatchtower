@@ -267,6 +267,11 @@ def main(argv=None):
                     print(f" - {item}")
 
     score = results["score"]
+    from .score_explanation import build_score_explanation, render_score_explanation
+    score_explanation = build_score_explanation(
+        score,
+        report_finding_ids={finding.finding_id for finding in results["findings"]},
+    )
 
     print()
     print("SECURITY SCORE")
@@ -277,6 +282,12 @@ def main(argv=None):
     print(f"Assessment Assurance: {assurance.get('level', 'INCOMPLETE')}")
     for limitation in assurance.get("limitations", ()):
         print(f"Coverage Limitation: {limitation}")
+    if score_explanation is not None:
+        print("Score Explanation:")
+        for line in render_score_explanation(
+            score_explanation, assurance.get("level", "INCOMPLETE")
+        ):
+            print(f" - {line}")
 
     print("FINDINGS:")
     print(f" - Critical: {score['counts']['CRITICAL']}")
@@ -318,6 +329,13 @@ def main(argv=None):
             else "Change: N/A"
         )
         print(f"Trend: {comparison['trend']}")
+        if comparison["trend"] == "SCORING_VERSION_CHANGED":
+            print(
+                "Scoring methodology changed from "
+                f"v{comparison['previous_scoring_version']} to "
+                f"v{comparison['current_scoring_version']}; the numeric scores are not a "
+                "posture improvement or regression."
+            )
 
         if comparison["new_findings"]:
             print()
