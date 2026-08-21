@@ -25,13 +25,15 @@ and cannot invent findings, grant approval, or modify a system.
 - **Preview candidate** — valuable for 1.0 if its trust and quality gates pass.
 - **Post-1.0** — intentionally deferred beyond the first professional release.
 
-## Current status: v0.4 implemented; native Windows validation pending
+## Current status: v0.4 implemented; initial Windows validation complete
 
 CyberWatchtower is currently a Linux-validated deterministic security-intelligence
 CLI with optional local persistent memory. Its observation boundary is
 platform-neutral. The Windows adapter and deterministic scan path are
-implemented with portable fixtures, but native Windows validation is still
-pending and the support remains experimental/pre-release. There is no macOS
+implemented with portable fixtures and have completed read-only production
+validation on one Windows 11 x64 host. Windows support remains
+experimental/pre-release until validation covers a broader supported matrix.
+There is no macOS
 adapter, desktop GUI, external knowledge retrieval, production model
 adapter, honeypot runtime, executable investigation capability, fleet
 controller, or voice interface.
@@ -101,7 +103,7 @@ by themselves change the version in package distribution metadata.
 | Persistent Security Memory v0.2 | Complete | Secure SQLite migrations, ingestion, host-isolated lifecycle/queries, decisions/exceptions/baselines, investigations/audit, structured references, optional core context, retention, integrity, and diagnostics. |
 | Trust and correctness v0.2.1 | Complete | Coverage-aware JSON resolution, assurance, strict legacy identity, socket privacy/completeness, source-role enforcement, authorization envelopes, and CI. |
 | Platform observations v0.3 | Complete | Immutable observations/failures, explicit platform selection, Linux adapter parity, conservative coverage, and future-adapter contracts. |
-| Windows observations v0.4 | Implemented; validation pending | Dependency-free native system, listener/attribution, and firewall collectors plus the assembled Windows scan path; guarded native tests still require Windows execution. |
+| Windows observations v0.4 | Implemented; initial validation complete | Dependency-free native system, listener/attribution, and firewall collectors plus the assembled Windows scan path; validated read-only on one Windows 11 x64 host, with broader matrix validation still pending. |
 
 ## Road to 1.0
 

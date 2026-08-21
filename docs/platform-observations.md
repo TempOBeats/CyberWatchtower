@@ -211,12 +211,32 @@ diagnostics do not cross the native boundary into reports, history, memory,
 Advisor, Intelligence Core, or provider data. Schema 1.2 and the existing memory
 schema are sufficient; no migration is required.
 
-The Windows path is **implemented but native validation is pending**. Portable
-fixture integration is covered on Linux, while native system, endpoint,
-firewall, and adapter tests are guarded and skipped there. Windows support is
-therefore experimental/pre-release rather than production-ready. Native CI is
-deferred until a narrowly read-only Windows job can be reviewed without running
-a full security scan of a public runner.
+The Windows path is **implemented and validated on one real Windows 11 x64
+host**, while remaining experimental/pre-release rather than universally
+validated. Read-only native system collection, endpoint collection, Windows
+Firewall profile collection, and the assembled `WindowsPlatformAdapter` all
+completed successfully. The production scan completed Scoring v2, wrote a
+schema 1.5 report, rendered the v1-to-v2 methodology transition correctly, and
+ingested the v2 report into Persistent Security Memory. The UDPv4 multiplicity
+path also handled a real two-instance, PID-distinct condition as one durable
+finding with `runtime_instance_count = 2`.
+
+This validation covers one host, not every supported Windows release,
+architecture, network configuration, or policy environment. It did not test
+active remote reachability or enumerate firewall-rule applicability. No
+remediation, firewall modification, elevation, or active network testing was
+performed. Native CI remains deferred until a narrowly read-only Windows job
+can be reviewed without running a full security scan of a public runner.
+
+Normal CLI output presents a compact projection of the canonical Scoring v2
+breakdown: final score, assurance, effective deduction, category totals,
+saturation, semantic-group counts, and guardrail state. `--score-details`
+enables the full safe deterministic group projection for local audit and debug
+work. The flag changes presentation only; it cannot change collection,
+findings, scoring, reports, memory, or Advisor authority. Advisor actions and
+recurring/new-finding displays may group equivalent listener conditions for
+readability while retaining every underlying canonical finding ID and leaving
+saved reports and lifecycle counts unchanged.
 
 Future adapters must:
 
