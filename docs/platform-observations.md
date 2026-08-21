@@ -36,8 +36,11 @@ sources map explicitly to the former; legacy Linux firewall sources retain their
 existing coverage mapping.
 
 Schema 1.4 also records an explicit scoring version. Current production scans
-continue to use Scoring v1. An explicitly supplied Scoring v2 result may carry a
-closed deterministic penalty breakdown for future integration. Older reports
+use Scoring v2 and carry its closed deterministic penalty breakdown. Advisor,
+briefing, and CLI score explanations validate and present that canonical
+breakdown; they do not recalculate penalties. Category saturation and confirmed-
+severity guardrail adjustments remain explicit, and assessment assurance is
+shown separately from risk score. Older reports
 without a scoring version normalize as v1 and retain their stored score and risk
 level without recomputation. Cross-version score comparisons are methodology
 changes, not posture improvements or regressions.
