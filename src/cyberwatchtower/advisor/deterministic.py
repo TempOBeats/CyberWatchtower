@@ -100,6 +100,11 @@ def _finding_rationale(finding: AdvisoryFinding) -> str:
         rationale += " This finding is new since the previous scan."
     if finding.is_recurring:
         rationale += f" It has appeared in {finding.occurrences} scans."
+    if finding.runtime_instance_count > 1:
+        rationale += (
+            " Multiple runtime instances were observed: "
+            f"{finding.runtime_instance_count}. This does not increase risk by itself."
+        )
     return rationale
 
 

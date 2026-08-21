@@ -1,7 +1,11 @@
 from collections.abc import Mapping
 
 from cyberwatchtower.finding_identity import finding_identity
-from cyberwatchtower.models import AssessmentState, FindingKind
+from cyberwatchtower.models import (
+    AssessmentState,
+    FindingKind,
+    MAX_RUNTIME_INSTANCE_COUNT,
+)
 from cyberwatchtower.report_contracts import assessment_assurance_summary
 from cyberwatchtower.score_explanation import build_score_explanation
 from cyberwatchtower.reachability import reachability_from_report
@@ -158,6 +162,18 @@ def build_advisor_context(
                         reachability.state.value,
                         str(raw_finding.get("recommendation", "")),
                     ) if reachability else None
+                ),
+                runtime_instance_count=(
+                    raw_finding.get("runtime_instance_count")
+                    if (
+                        isinstance(raw_finding.get("runtime_instance_count"), int)
+                        and not isinstance(
+                            raw_finding.get("runtime_instance_count"), bool
+                        )
+                        and 1 <= raw_finding.get("runtime_instance_count")
+                        <= MAX_RUNTIME_INSTANCE_COUNT
+                    )
+                    else 1
                 ),
             )
         )

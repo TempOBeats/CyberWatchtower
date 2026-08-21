@@ -259,6 +259,11 @@ def main(argv=None):
             print(f"Description: {finding.description}")
             print(f"Confidence: {finding.confidence}%")
             print(f"Recommendation: {finding.recommendation}")
+            if finding.runtime_instance_count > 1:
+                print(
+                    "Multiple runtime instances observed: "
+                    f"{finding.runtime_instance_count}"
+                )
 
             if finding.evidence:
                 print("Evidence:")

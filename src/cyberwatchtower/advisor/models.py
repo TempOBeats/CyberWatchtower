@@ -30,6 +30,7 @@ class AdvisoryFinding:
     reachability_state: str | None = None
     reachability_basis: tuple[str, ...] = ()
     presentation_group_id: str | None = None
+    runtime_instance_count: int = 1
 
     @property
     def is_recurring(self) -> bool:
