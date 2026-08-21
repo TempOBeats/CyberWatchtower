@@ -26,6 +26,8 @@ class ScoreContributorExplanation:
     finding_ids: tuple[str, ...]
     severity: str
     assessment_state: str
+    base_penalty: int
+    raw_penalty: int
     applied_penalty: int
     basis_code: str
 
@@ -106,6 +108,8 @@ def build_score_explanation(
             finding_ids=tuple(item["finding_ids"]),
             severity=str(item["severity"]),
             assessment_state=str(item["assessment_state"]),
+            base_penalty=int(item["base_penalty"]),
+            raw_penalty=int(item["raw_penalty"]),
             applied_penalty=int(item["applied_penalty"]),
             basis_code=str(item["basis_code"]),
         )
@@ -157,6 +161,8 @@ def build_score_explanation(
 def render_score_explanation(
     explanation: ScoreExplanation,
     assessment_assurance: str,
+    *,
+    detailed: bool = False,
 ) -> tuple[str, ...]:
     """Render only values already present in the validated score projection."""
 
@@ -169,22 +175,26 @@ def render_score_explanation(
         return (*lines, "Detailed score contributors are unavailable for Scoring v1.")
 
     lines = (*lines, f"Effective deduction: {explanation.total_effective_penalty}")
+    lines = (*lines, "Score contributors:")
     for category in explanation.categories:
-        lines = (*lines, f"- {category.label}: {category.applied_penalty}-point applied penalty")
+        lines = (*lines, f"- {category.label}: {category.applied_penalty} points")
         if category.saturated:
             lines = (*lines, "  - category saturated")
         lines = (*lines, (
             f"  - {len(category.finding_ids)} atomic finding(s) represented by "
             f"{len(category.contributor_group_ids)} semantic scoring group(s)"
         ))
-    for contributor in explanation.contributors:
-        member_ids = ", ".join(contributor.finding_ids)
-        lines = (*lines, (
-            f"- Scoring group {contributor.group_id}: "
-            f"{contributor.applied_penalty}-point applied penalty; "
-            f"{contributor.severity}/{contributor.assessment_state}; "
-            f"basis {contributor.basis_code}; findings {member_ids}"
-        ))
+    if detailed:
+        lines = (*lines, "Detailed scoring groups:")
+        for contributor in explanation.contributors:
+            member_ids = ", ".join(contributor.finding_ids)
+            lines = (*lines, (
+                f"- Scoring group {contributor.group_id}: base "
+                f"{contributor.base_penalty}; raw {contributor.raw_penalty}; "
+                f"applied {contributor.applied_penalty}; "
+                f"{contributor.severity}/{contributor.assessment_state}; "
+                f"basis {contributor.basis_code}; findings {member_ids}"
+            ))
     guardrail = explanation.guardrail
     if guardrail is not None:
         highest = guardrail.highest_confirmed_severity or "NONE"
@@ -194,4 +204,11 @@ def render_score_explanation(
                 "Confirmed-risk guardrail adjustment: "
                 f"{guardrail.additional_guardrail_penalty}"
             ))
+            if detailed:
+                lines = (*lines, (
+                    "Guardrail detail: category penalties "
+                    f"{guardrail.category_applied_penalty_total}; effective "
+                    f"deduction {guardrail.effective_penalty_total}; score ceiling "
+                    f"{guardrail.effective_score_ceiling}"
+                ))
     return lines
