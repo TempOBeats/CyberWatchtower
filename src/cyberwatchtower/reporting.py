@@ -24,6 +24,7 @@ def finding_to_dict(finding):
         "source": finding.source,
         "kind": finding.kind.value,
         "assessment_state": finding.assessment_state.value,
+        "runtime_instance_count": finding.runtime_instance_count,
     }
 
     data["finding_id"] = finding.finding_id or finding_identity(data)

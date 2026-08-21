@@ -3,13 +3,19 @@ from datetime import datetime, timezone
 import unicodedata
 
 from cyberwatchtower.finding_identity import finding_identity
-from cyberwatchtower.models import AssessmentState, FindingKind, Severity
+from cyberwatchtower.models import (
+    AssessmentState,
+    FindingKind,
+    MAX_RUNTIME_INSTANCE_COUNT,
+    Severity,
+)
 from cyberwatchtower.report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     CoverageState,
     LEGACY_REPORT_SCHEMA_VERSION,
     REACHABILITY_REPORT_SCHEMA_VERSION,
+    SCORING_REPORT_SCHEMA_VERSION,
     STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
     ScanDomain,
     normalize_assessment_domains,
@@ -31,6 +37,7 @@ SUPPORTED_REPORT_SCHEMAS = frozenset({
     STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     REACHABILITY_REPORT_SCHEMA_VERSION,
+    SCORING_REPORT_SCHEMA_VERSION,
     CURRENT_REPORT_SCHEMA_VERSION,
 })
 SEVERITIES = tuple(item.value for item in Severity)
@@ -149,6 +156,26 @@ def _score(
 def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFinding, int]:
     field = f"findings[{index}]"
     finding = _mapping(raw_finding, field)
+    if schema_version == CURRENT_REPORT_SCHEMA_VERSION:
+        if "runtime_instance_count" not in finding:
+            raise ReportValidationError(
+                "MISSING_RUNTIME_MULTIPLICITY",
+                f"{field}.runtime_instance_count is required.",
+                f"{field}.runtime_instance_count",
+            )
+        runtime_instance_count = _integer(
+            finding.get("runtime_instance_count"),
+            f"{field}.runtime_instance_count",
+            1,
+            MAX_RUNTIME_INSTANCE_COUNT,
+        )
+    else:
+        runtime_instance_count = _integer(
+            finding.get("runtime_instance_count", 1),
+            f"{field}.runtime_instance_count",
+            1,
+            MAX_RUNTIME_INSTANCE_COUNT,
+        )
     try:
         reachability_from_report(finding.get("network_context"))
     except ValueError as exc:
@@ -264,6 +291,7 @@ def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFi
         assessment,
         metadata_inferred,
         safe_evidence,
+        runtime_instance_count,
     ), omitted
 
 
@@ -292,6 +320,7 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
     if schema_version in {
         APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
         REACHABILITY_REPORT_SCHEMA_VERSION,
+        SCORING_REPORT_SCHEMA_VERSION,
         CURRENT_REPORT_SCHEMA_VERSION,
     } and raw_domains is None:
         raise ReportValidationError(
@@ -322,6 +351,7 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
         if schema_version in {
             APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
             REACHABILITY_REPORT_SCHEMA_VERSION,
+            SCORING_REPORT_SCHEMA_VERSION,
             CURRENT_REPORT_SCHEMA_VERSION,
         } and set(raw_coverage) - applicable:
             raise ReportValidationError(

@@ -14,6 +14,10 @@ from .scoring_contracts import (
     ScoringResult,
     ScoringVersion,
 )
+from .report_contracts import (
+    CURRENT_REPORT_SCHEMA_VERSION,
+    SCORING_REPORT_SCHEMA_VERSION,
+)
 
 
 MAX_SCORING_CONTRIBUTORS = 4_096
@@ -187,7 +191,9 @@ def serialize_scoring_result(
             "guardrail": _guardrail_mapping(result),
         },
     }
-    validate_serialized_security_score(score, "1.4", report_finding_ids)
+    validate_serialized_security_score(
+        score, CURRENT_REPORT_SCHEMA_VERSION, report_finding_ids
+    )
     return score
 
 
@@ -470,23 +476,26 @@ def validate_serialized_security_score(
 
     score_data = _mapping(raw_score, "security_score")
     version = scoring_version_from_score(score_data)
-    if schema_version == "1.4" and "scoring_version" not in score_data:
+    scoring_schemas = {
+        SCORING_REPORT_SCHEMA_VERSION, CURRENT_REPORT_SCHEMA_VERSION
+    }
+    if schema_version in scoring_schemas and "scoring_version" not in score_data:
         raise ScoringReportValidationError(
             "MISSING_SCORING_VERSION",
-            "Schema 1.4 requires an explicit scoring version.",
+            "This report schema requires an explicit scoring version.",
             "security_score.scoring_version",
         )
-    if schema_version != "1.4" and version != ScoringVersion.V1:
+    if schema_version not in scoring_schemas and version != ScoringVersion.V1:
         raise ScoringReportValidationError(
             "SCORING_VERSION_SCHEMA_MISMATCH",
-            "Scoring v2 requires the schema 1.4 scoring contract.",
+            "Scoring v2 requires a supported scoring report schema.",
             "security_score.scoring_version",
         )
     expected_keys = (
         _SCORE_KEYS if version == ScoringVersion.V2
         else _SCORE_KEYS - {"breakdown"}
     )
-    if schema_version == "1.4" or version == ScoringVersion.V2:
+    if schema_version in scoring_schemas or version == ScoringVersion.V2:
         _exact_keys(score_data, expected_keys, "security_score")
     score = _integer(score_data.get("score"), "security_score.score", maximum=100)
     risk_value = score_data.get("risk_level")
@@ -497,7 +506,7 @@ def validate_serialized_security_score(
     )
     counts_data = _mapping(score_data.get("counts", {}), "security_score.counts")
     allowed_severities = tuple(item.value for item in Severity)
-    if schema_version == "1.4" and set(counts_data) - set(allowed_severities):
+    if schema_version in scoring_schemas and set(counts_data) - set(allowed_severities):
         raise ScoringReportValidationError(
             "INVALID_SCORING_COUNTS", "Unknown severity count.",
             "security_score.counts",

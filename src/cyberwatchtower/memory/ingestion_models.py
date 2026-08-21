@@ -72,6 +72,7 @@ class NormalizedFinding:
     assessment_state: str
     metadata_inferred: bool
     evidence: tuple[str, ...]
+    runtime_instance_count: int = 1
 
 
 @dataclass(frozen=True)
