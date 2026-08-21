@@ -1,3 +1,4 @@
+import copy
 import unittest
 
 from cyberwatchtower.advisor.context import build_advisor_context
@@ -145,6 +146,62 @@ class AdvisorContextTests(unittest.TestCase):
 
 
 class DeterministicAdvisorTests(unittest.TestCase):
+    def test_actions_group_structurally_equivalent_listener_controls(self):
+        report = _current_report()
+        first = dict(report["findings"][0])
+        first.update({
+            "finding_id": "dns-a", "recommendation": "Verify DNS exposure.",
+            "network_context": {
+                "bind_exposure": "all_interfaces",
+                "bind_epistemic_role": "OBSERVED_FACT",
+                "reachability_state": "POTENTIALLY_REACHABLE",
+                "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+                "evidence_basis": ["SOCKET_WILDCARD_BIND"],
+            },
+            "assessment_state": "POTENTIAL",
+            "evidence": ["Protocol: udp", "Port: 53", "Process: dns.exe"],
+        })
+        second = dict(first)
+        second.update({
+            "finding_id": "dns-b",
+            "evidence": ["Protocol: udp", "Port: 5353", "Process: dns.exe"],
+        })
+        report["findings"] = [first, second]
+        before = copy.deepcopy(report)
+
+        advisory = build_deterministic_advisory(
+            build_advisor_context(report, None, None)
+        )
+
+        self.assertEqual(len(advisory.actions), 1)
+        self.assertEqual(advisory.actions[0].finding_ids, ("dns-a", "dns-b"))
+        self.assertIn("covers 2 related listener findings", advisory.actions[0].rationale)
+        self.assertEqual(report, before)
+        self.assertEqual(report["security_score"], before["security_score"])
+
+    def test_unknown_listener_controls_on_different_ports_remain_separate(self):
+        report = _current_report()
+        template = dict(report["findings"][0])
+        template.update({
+            "recommendation": "Verify unknown exposure.",
+            "network_context": {
+                "bind_exposure": "all_interfaces",
+                "bind_epistemic_role": "OBSERVED_FACT",
+                "reachability_state": "POTENTIALLY_REACHABLE",
+                "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+                "evidence_basis": ["SOCKET_WILDCARD_BIND"],
+            },
+            "assessment_state": "POTENTIAL",
+        })
+        first = dict(template, finding_id="unknown-a", evidence=["Protocol: udp", "Port: 1"])
+        second = dict(template, finding_id="unknown-b", evidence=["Protocol: udp", "Port: 2"])
+        report["findings"] = [first, second]
+
+        advisory = build_deterministic_advisory(
+            build_advisor_context(report, None, None)
+        )
+
+        self.assertEqual(len(advisory.actions), 2)
     def test_advisory_summarizes_priorities_changes_recurrence_and_coverage(self):
         report = _current_report()
         comparison = {

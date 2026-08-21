@@ -107,6 +107,9 @@ class ScoreExplanationTests(unittest.TestCase):
         )
         rendered = "\n".join(render_score_explanation(explanation, "PARTIAL"))
         self.assertIn("Assessment Assurance: PARTIAL", rendered)
+        detailed = "\n".join(render_score_explanation(
+            explanation, "PARTIAL", detailed=True
+        ))
         guardrail_report = _v2_report(firewall_only=True)
         guardrail_explanation = build_score_explanation(
             guardrail_report["security_score"],
@@ -118,9 +121,12 @@ class ScoreExplanationTests(unittest.TestCase):
         )
         self.assertIn("Confirmed-risk guardrail adjustment: 1", guardrail_rendered)
         for contributor in breakdown["contributors"]:
-            self.assertIn(contributor["group_id"], rendered)
+            self.assertNotIn(contributor["group_id"], rendered)
+            self.assertIn(contributor["group_id"], detailed)
+            self.assertIn(f"raw {contributor['raw_penalty']}", detailed)
             for finding_id in contributor["finding_ids"]:
-                self.assertIn(finding_id, rendered)
+                self.assertNotIn(finding_id, rendered)
+                self.assertIn(finding_id, detailed)
 
     def test_advisor_and_briefing_share_canonical_projection(self):
         report = _v2_report()
@@ -136,8 +142,8 @@ class ScoreExplanationTests(unittest.TestCase):
         self.assertIn(f"Effective deduction: {canonical_total}", advisor_text)
         self.assertIn(f"Effective deduction: {canonical_total}", briefing_text)
         for finding_id in ("finding:firewall", "finding:listener:a", "finding:listener:b"):
-            self.assertIn(finding_id, advisor_text)
-            self.assertIn(finding_id, briefing_text)
+            self.assertNotIn(finding_id, advisor_text)
+            self.assertNotIn(finding_id, briefing_text)
 
     def test_methodology_transition_is_not_called_improvement(self):
         report = _v2_report()
@@ -213,7 +219,7 @@ class ScoreExplanationTests(unittest.TestCase):
             schema_version="1.4",
         )
         rendered = "\n".join(render_score_explanation(explanation, "COMPLETE"))
-        self.assertIn("Network exposure: 18-point applied penalty", rendered)
+        self.assertIn("Network exposure: 18 points", rendered)
         self.assertIn("category saturated", rendered)
 
     def test_cli_renders_canonical_v2_breakdown_without_scorer_import(self):
@@ -251,6 +257,38 @@ class ScoreExplanationTests(unittest.TestCase):
         self.assertIn("Scoring Method: v2", rendered)
         self.assertIn("Effective deduction: 0", rendered)
         self.assertIn("Assessment Assurance: PARTIAL", rendered)
+
+    def test_cli_score_details_is_presentation_only(self):
+        score = serialize_scoring_result(calculate_security_score_v2(()), set())
+        results = {
+            "system": {"hostname": "test-host"}, "firewall": {},
+            "findings": [], "score": score,
+            "assessment_assurance": {"level": "COMPLETE", "limitations": []},
+        }
+        report = {
+            "schema_version": "1.5", "system": results["system"],
+            "findings": [], "security_score": score,
+        }
+        intelligence = {
+            "total_scans": 1, "average_score": 100, "best_score": 100,
+            "worst_score": 100, "overall_change": 0,
+            "overall_trend": "UNCHANGED", "findings": [],
+        }
+        with (
+            patch("cyberwatchtower.cli.run_scan", return_value=results) as run_scan,
+            patch("cyberwatchtower.cli.save_json_report", return_value="report.json"),
+            patch("cyberwatchtower.cli.load_reports", return_value=[report]),
+            patch("cyberwatchtower.cli.analyze_history", return_value=intelligence),
+            patch("cyberwatchtower.cli._display_advisor"),
+            patch("cyberwatchtower.cli._ingest_saved_report", return_value=None),
+            patch(
+                "cyberwatchtower.score_explanation.render_score_explanation",
+                return_value=("safe detail",),
+            ) as render,
+        ):
+            main(["--score-details"])
+        run_scan.assert_called_once_with()
+        self.assertTrue(render.call_args.kwargs["detailed"])
 
 
 if __name__ == "__main__":
