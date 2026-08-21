@@ -15,6 +15,7 @@ from cyberwatchtower.core.evidence import (
 )
 from cyberwatchtower.core.grounding import require_grounded
 from cyberwatchtower.memory.context import MemoryContext
+from cyberwatchtower.score_explanation import render_score_explanation
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,14 @@ def build_security_briefing(
             "Deterministic historical analysis",
         ),
     ]
+    if context.score_explanation is not None:
+        evidence.append(make_evidence_ref(
+            "advisor:score",
+            EvidenceSource.DETERMINISTIC_ADVISOR,
+            "score_explanation",
+            EpistemicRole.DETERMINISTIC_DERIVATION,
+            "Canonical deterministic score breakdown",
+        ))
     findings_by_id = {finding.finding_id: finding for finding in context.findings}
     priority_claims = []
     for group in advisory.finding_groups[:5]:
@@ -147,6 +156,16 @@ def build_security_briefing(
             _claim("recurring:summary", advisory.recurring_summary, "advisor:recurring"),
         )),
     ]
+    if context.score_explanation is not None:
+        score_claims = tuple(
+            _claim(f"score:{index}", line, "advisor:score")
+            for index, line in enumerate(render_score_explanation(
+                context.score_explanation, context.assessment_assurance
+            ), start=1)
+        )
+        sections.insert(1, ResponseSection(
+            "score", "Score explanation", score_claims
+        ))
     if context.resolved_findings:
         resolved_text = "; ".join(item.title for item in context.resolved_findings)
         sections.append(ResponseSection("resolved", "Resolved issues", (

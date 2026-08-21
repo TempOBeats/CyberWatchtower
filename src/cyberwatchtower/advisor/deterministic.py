@@ -197,10 +197,23 @@ def _changes_summary(context: AdvisorContext) -> str:
     if context.previous_score is None:
         return "No previous same-host scan is available for comparison."
 
-    summary = (
+    if context.trend == "SCORING_VERSION_CHANGED":
+        transition = ""
+        if context.previous_scoring_version and context.current_scoring_version:
+            transition = (
+                f" from v{context.previous_scoring_version} to "
+                f"v{context.current_scoring_version}"
+            )
+        summary = (
+            f"The scoring methodology changed{transition} between assessments, "
+            "so the numeric "
+            "score difference is not classified as an improvement or regression."
+        )
+    else:
+        summary = (
         f"The score changed by {context.score_change:+d} points since the previous "
         f"scan, so the short-term trend is {context.trend}."
-    )
+        )
     if context.new_findings:
         new_titles = "; ".join(
             finding.title for finding in context.new_findings[:3]

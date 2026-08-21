@@ -1,4 +1,5 @@
 from .models import AdvisoryReport, AdvisorContext
+from cyberwatchtower.score_explanation import render_score_explanation
 
 
 def render_advisory(advisory: AdvisoryReport, context: AdvisorContext) -> str:
@@ -11,9 +12,19 @@ def render_advisory(advisory: AdvisoryReport, context: AdvisorContext) -> str:
         "",
         "CURRENT SECURITY POSTURE",
         advisory.posture_summary,
+    ]
+    if context.score_explanation is not None:
+        lines.extend((
+            "",
+            "SCORE EXPLANATION",
+            *render_score_explanation(
+                context.score_explanation, context.assessment_assurance
+            ),
+        ))
+    lines.extend([
         "",
         "MOST IMPORTANT FINDINGS",
-    ]
+    ])
 
     if advisory.finding_groups:
         for group in advisory.finding_groups[:5]:

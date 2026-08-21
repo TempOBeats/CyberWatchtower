@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from cyberwatchtower.models import AssessmentState, FindingKind
+from cyberwatchtower.score_explanation import ScoreExplanation
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,9 @@ class AdvisorContext:
     assessment_assurance: str = "INCOMPLETE"
     coverage_limitations: tuple[str, ...] = ()
     uncertain_findings: tuple[ChangeFinding, ...] = ()
+    score_explanation: ScoreExplanation | None = None
+    previous_scoring_version: str | None = None
+    current_scoring_version: str | None = None
 
 
 @dataclass(frozen=True)

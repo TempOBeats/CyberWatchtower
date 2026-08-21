@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.models import AssessmentState, FindingKind
 from cyberwatchtower.report_contracts import assessment_assurance_summary
+from cyberwatchtower.score_explanation import build_score_explanation
 from cyberwatchtower.reachability import reachability_from_report
 from cyberwatchtower.presentation import listener_group_id_from_values
 
@@ -183,7 +184,7 @@ def build_advisor_context(
         ),
         score_change=(
             int(comparison["change"])
-            if "change" in comparison
+            if comparison.get("change") is not None
             else None
         ),
         trend=str(comparison.get("trend", "UNKNOWN")),
@@ -204,4 +205,11 @@ def build_advisor_context(
             _change_finding(finding)
             for finding in comparison.get("uncertain_findings", [])
         ),
+        score_explanation=build_score_explanation(
+            score_data,
+            report_finding_ids={finding.finding_id for finding in findings},
+            schema_version=current_report.get("schema_version"),
+        ),
+        previous_scoring_version=comparison.get("previous_scoring_version"),
+        current_scoring_version=comparison.get("current_scoring_version"),
     )
