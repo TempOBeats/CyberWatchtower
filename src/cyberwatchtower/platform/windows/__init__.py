@@ -3,6 +3,7 @@
 from .api import (
     WindowsApiProtocol,
     WindowsFirewallApiProtocol,
+    WindowsFirewallRulesApiProtocol,
     WindowsNetworkApiProtocol,
     WindowsSystemApiProtocol,
 )
@@ -22,6 +23,27 @@ from .network import collect_windows_network
 from .firewall import (
     collect_windows_firewall_inbound_policy,
     collect_windows_firewall_technology,
+)
+from .firewall_rule_models import (
+    RawWindowsApplicationPath,
+    RawWindowsFirewallRule,
+    RawWindowsInterfaceIdentity,
+    WindowsFirewallPolicyView,
+    WindowsFirewallRuleCollectionResult,
+    WindowsFirewallRuleResultCode,
+    WindowsRawFirewallInterfaceType,
+    WindowsRawFirewallRuleAction,
+    WindowsRawFirewallRuleDirection,
+    WindowsRawFirewallUnsupportedFeature,
+)
+from .firewall_rules import (
+    WINDOWS_FIREWALL_COM_ENUMERATION_CONTRACT,
+    WindowsComGetterDeadlineGuarantee,
+    WindowsComOwnershipRequirement,
+    WindowsFirewallComEnumerationContract,
+    WindowsFirewallRuleNormalizationResult,
+    normalize_windows_firewall_rules,
+    windows_application_identity,
 )
 from .models import (
     RawFirewallProfile,
@@ -52,6 +74,9 @@ __all__ = [
     "RawTcpEndpoint",
     "RawUdpEndpoint",
     "RawWindowsSystemInfo",
+    "RawWindowsApplicationPath",
+    "RawWindowsFirewallRule",
+    "RawWindowsInterfaceIdentity",
     "WindowsAddressFamily",
     "WindowsApiFixture",
     "WindowsApiProtocol",
@@ -64,10 +89,23 @@ __all__ = [
     "WindowsEndpointTableResultCode",
     "WindowsEndpointValidationReason",
     "WindowsFirewallApiProtocol",
+    "WindowsFirewallRulesApiProtocol",
     "WindowsFirewallAction",
     "WindowsFirewallEnablement",
     "WindowsFirewallProfile",
     "WindowsProfileState",
+    "WindowsFirewallPolicyView",
+    "WindowsFirewallRuleCollectionResult",
+    "WindowsFirewallRuleResultCode",
+    "WindowsRawFirewallInterfaceType",
+    "WindowsRawFirewallRuleAction",
+    "WindowsRawFirewallRuleDirection",
+    "WindowsRawFirewallUnsupportedFeature",
+    "WINDOWS_FIREWALL_COM_ENUMERATION_CONTRACT",
+    "WindowsComGetterDeadlineGuarantee",
+    "WindowsComOwnershipRequirement",
+    "WindowsFirewallComEnumerationContract",
+    "WindowsFirewallRuleNormalizationResult",
     "WindowsServiceState",
     "WindowsSystemApiProtocol",
     "WindowsTcpState",
@@ -75,5 +113,7 @@ __all__ = [
     "collect_windows_network",
     "collect_windows_firewall_inbound_policy",
     "collect_windows_firewall_technology",
+    "normalize_windows_firewall_rules",
+    "windows_application_identity",
     "read_bounded_native_table",
 ]
