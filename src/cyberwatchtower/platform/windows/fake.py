@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .errors import WindowsFailureCode
+from .firewall_rule_models import (
+    WindowsFirewallPolicyView,
+    WindowsFirewallRuleCollectionResult,
+    WindowsFirewallRuleResultCode,
+)
 from .models import (
     RawFirewallProfile,
     RawMachineIdentity,
@@ -41,12 +46,20 @@ class WindowsApiFixture:
     processes: tuple[tuple[int, WindowsApiResult[RawProcessInfo]], ...]
     services: WindowsApiResult[tuple[RawServiceInfo, ...]]
     firewall_profiles: WindowsApiResult[tuple[RawFirewallProfile, ...]]
+    firewall_rules: WindowsFirewallRuleCollectionResult = (
+        WindowsFirewallRuleCollectionResult(
+            WindowsFirewallRuleResultCode.COMPLETE,
+            WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+        )
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.system_info, WindowsApiResult):
             raise TypeError("system fixture must use WindowsApiResult.")
         if not isinstance(self.machine_identity, WindowsApiResult):
             raise TypeError("identity fixture must use WindowsApiResult.")
+        if not isinstance(self.firewall_rules, WindowsFirewallRuleCollectionResult):
+            raise TypeError("firewall rule fixture must use its typed result.")
         if not isinstance(self.processes, tuple):
             raise TypeError("process fixtures must be an immutable tuple.")
         process_ids = []
@@ -120,3 +133,6 @@ class FakeWindowsApi:
         self,
     ) -> WindowsApiResult[tuple[RawFirewallProfile, ...]]:
         return self._fixture.firewall_profiles
+
+    def collect_firewall_rules(self) -> WindowsFirewallRuleCollectionResult:
+        return self._fixture.firewall_rules
