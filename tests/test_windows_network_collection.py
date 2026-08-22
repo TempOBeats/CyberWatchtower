@@ -42,6 +42,7 @@ from cyberwatchtower.platform.windows.native_network import (
     _endpoint_table,
     _read_endpoint_table,
     collect_tcp_endpoints,
+    collect_udp_endpoints,
     decode_endpoint_table,
 )
 from cyberwatchtower.report_contracts import CoverageState
@@ -312,6 +313,31 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
             (0, 4, 8),
         )
 
+    def test_udp6_layout_matches_fixed_width_windows_sdk_contract(self):
+        class MibUdp6RowOwnerPid(ctypes.Structure):
+            _fields_ = (
+                ("local_address", ctypes.c_ubyte * 16),
+                ("local_scope_id", ctypes.c_uint32),
+                ("local_port", ctypes.c_uint32),
+                ("owning_pid", ctypes.c_uint32),
+            )
+
+        class MibUdp6TableOwnerPid(ctypes.Structure):
+            _fields_ = (
+                ("entry_count", ctypes.c_uint32),
+                ("table", MibUdp6RowOwnerPid * 1),
+            )
+
+        self.assertEqual(ctypes.sizeof(MibUdp6RowOwnerPid), 28)
+        self.assertEqual(ctypes.alignment(MibUdp6RowOwnerPid), 4)
+        self.assertEqual(MibUdp6TableOwnerPid.table.offset, 4)
+        self.assertEqual(
+            tuple(getattr(MibUdp6RowOwnerPid, name).offset for name in (
+                "local_address", "local_scope_id", "local_port", "owning_pid"
+            )),
+            (0, 16, 20, 24),
+        )
+
     def test_udp4_validation_branches_have_closed_sanitized_reasons(self):
         zero_port_row = struct.pack("<3I", 0, 0, 4)
         cases = (
@@ -393,6 +419,120 @@ class WindowsNativeEndpointValidationTests(unittest.TestCase):
         self.assertEqual(
             raised.exception.reason,
             WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH,
+        )
+
+    def test_udp6_duplicate_owner_rows_are_one_semantic_endpoint(self):
+        row = struct.pack(
+            "<16sIII", bytes.fromhex("fe800000000000000000000000000001"),
+            12, self._native_port(5353), 40,
+        )
+        payload = struct.pack("<I", 2) + row + row
+
+        first = decode_endpoint_table(
+            payload, WindowsAddressFamily.IPV6, "udp"
+        )
+        second = decode_endpoint_table(
+            payload, WindowsAddressFamily.IPV6, "udp"
+        )
+
+        expected = (
+            RawUdpEndpoint(
+                WindowsAddressFamily.IPV6, "fe80::1%12", 5353, 40
+            ),
+        )
+        self.assertEqual(first, expected)
+        self.assertEqual(second, expected)
+
+    def test_udp6_duplicate_owner_rows_keep_udp_and_network_complete(self):
+        row = struct.pack(
+            "<16sIII", bytes.fromhex("00000000000000000000000000000000"),
+            0, self._native_port(5353), 40,
+        )
+        payload = struct.pack("<I", 2) + row + row
+
+        class FixedNativeTable:
+            def __call__(self, buffer, size_pointer, *_args):
+                size_pointer._obj.value = len(payload)
+                if buffer is None:
+                    return 122
+                ctypes.memmove(buffer, payload, len(payload))
+                return 0
+
+        api = SimpleNamespace(GetExtendedUdpTable=FixedNativeTable())
+        with patch(
+            "cyberwatchtower.platform.windows.native_network._iphlpapi",
+            return_value=api,
+        ):
+            ipv6 = _read_endpoint_table(WindowsAddressFamily.IPV6, "udp")
+
+        ipv4_endpoint = RawUdpEndpoint(
+            WindowsAddressFamily.IPV4, "0.0.0.0", 53, 4
+        )
+        ipv4 = WindowsApiResult(
+            (ipv4_endpoint,), endpoint_diagnostics=(
+                WindowsEndpointTableDiagnostic(
+                    WindowsEndpointTable.UDP_IPV4,
+                    WindowsEndpointTableResultCode.COMPLETE,
+                ),
+            ),
+        )
+        with patch(
+            "cyberwatchtower.platform.windows.native_network._read_endpoint_table",
+            side_effect=(ipv4, ipv6),
+        ):
+            combined = collect_udp_endpoints()
+
+        self.assertIsNone(ipv6.failure)
+        self.assertEqual(ipv6.endpoint_diagnostics, (
+            WindowsEndpointTableDiagnostic(
+                WindowsEndpointTable.UDP_IPV6,
+                WindowsEndpointTableResultCode.COMPLETE,
+            ),
+        ))
+        self.assertIsNone(combined.failure)
+        self.assertEqual(len(combined.value), 2)
+        normalized = collect_windows_network(fixture_api(udp_result=combined))
+        self.assertEqual(normalized.coverage, CoverageState.COMPLETE)
+        self.assertEqual(len(normalized.observations), 2)
+
+    def test_udp6_duplicate_prefix_does_not_hide_invalid_rows(self):
+        valid = struct.pack(
+            "<16sIII", bytes(16), 0, self._native_port(5353), 40
+        )
+        truncated = struct.pack("<I", 3) + valid + valid
+        zero_port = struct.pack("<16sIII", bytes(16), 0, 0, 40)
+
+        for payload, reason in (
+            (truncated, WindowsEndpointValidationReason.BUFFER_SIZE_MISMATCH),
+            (
+                struct.pack("<I", 2) + valid + zero_port,
+                WindowsEndpointValidationReason.PORT_ENCODING_INVALID,
+            ),
+        ):
+            with self.subTest(reason=reason), self.assertRaises(
+                _EndpointValidationFailure
+            ) as raised:
+                decode_endpoint_table(
+                    payload, WindowsAddressFamily.IPV6, "udp"
+                )
+            self.assertEqual(raised.exception.reason, reason)
+
+        one_row = struct.pack(
+            "<I16sIII", 1, bytes(16), 0, self._native_port(5353), 40
+        )
+        with (
+            patch(
+                "cyberwatchtower.platform.windows.native_network._address_v6",
+                side_effect=ValueError,
+            ),
+            self.assertRaises(_EndpointValidationFailure) as raised,
+        ):
+            decode_endpoint_table(
+                one_row, WindowsAddressFamily.IPV6, "udp"
+            )
+        self.assertEqual(
+            raised.exception.reason,
+            WindowsEndpointValidationReason.ADDRESS_ENCODING_INVALID,
         )
 
     def test_tcp_duplicate_rows_remain_invalid(self):
