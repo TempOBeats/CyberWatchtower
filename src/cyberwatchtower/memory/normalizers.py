@@ -11,6 +11,8 @@ from cyberwatchtower.models import (
 )
 from cyberwatchtower.report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
+    MULTIPLICITY_REPORT_SCHEMA_VERSION,
+    POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     CoverageState,
     LEGACY_REPORT_SCHEMA_VERSION,
@@ -38,6 +40,8 @@ SUPPORTED_REPORT_SCHEMAS = frozenset({
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     REACHABILITY_REPORT_SCHEMA_VERSION,
     SCORING_REPORT_SCHEMA_VERSION,
+    MULTIPLICITY_REPORT_SCHEMA_VERSION,
+    POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
     CURRENT_REPORT_SCHEMA_VERSION,
 })
 SEVERITIES = tuple(item.value for item in Severity)
@@ -156,7 +160,10 @@ def _score(
 def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFinding, int]:
     field = f"findings[{index}]"
     finding = _mapping(raw_finding, field)
-    if schema_version == CURRENT_REPORT_SCHEMA_VERSION:
+    if schema_version in {
+        MULTIPLICITY_REPORT_SCHEMA_VERSION,
+        POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
+    }:
         if "runtime_instance_count" not in finding:
             raise ReportValidationError(
                 "MISSING_RUNTIME_MULTIPLICITY",
@@ -176,8 +183,19 @@ def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFi
             1,
             MAX_RUNTIME_INSTANCE_COUNT,
         )
+    network_context = finding.get("network_context")
+    if (
+        schema_version != POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION
+        and isinstance(network_context, Mapping)
+        and "policy_assessment" in network_context
+    ):
+        raise ReportValidationError(
+            "POLICY_METADATA_SCHEMA_MISMATCH",
+            f"{field}.network_context policy metadata requires schema 1.6.",
+            f"{field}.network_context.policy_assessment",
+        )
     try:
-        reachability_from_report(finding.get("network_context"))
+        reachability_from_report(network_context)
     except ValueError as exc:
         raise ReportValidationError(
             "INVALID_NETWORK_CONTEXT",
@@ -321,6 +339,8 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
         APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
         REACHABILITY_REPORT_SCHEMA_VERSION,
         SCORING_REPORT_SCHEMA_VERSION,
+        MULTIPLICITY_REPORT_SCHEMA_VERSION,
+        POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
         CURRENT_REPORT_SCHEMA_VERSION,
     } and raw_domains is None:
         raise ReportValidationError(
@@ -352,6 +372,8 @@ def normalize_report(raw_report: Mapping) -> tuple[NormalizedReport, int]:
             APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
             REACHABILITY_REPORT_SCHEMA_VERSION,
             SCORING_REPORT_SCHEMA_VERSION,
+            MULTIPLICITY_REPORT_SCHEMA_VERSION,
+            POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
             CURRENT_REPORT_SCHEMA_VERSION,
         } and set(raw_coverage) - applicable:
             raise ReportValidationError(

@@ -16,6 +16,7 @@ from .scoring_contracts import (
 )
 from .report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
+    MULTIPLICITY_REPORT_SCHEMA_VERSION,
     SCORING_REPORT_SCHEMA_VERSION,
 )
 
@@ -477,7 +478,9 @@ def validate_serialized_security_score(
     score_data = _mapping(raw_score, "security_score")
     version = scoring_version_from_score(score_data)
     scoring_schemas = {
-        SCORING_REPORT_SCHEMA_VERSION, CURRENT_REPORT_SCHEMA_VERSION
+        SCORING_REPORT_SCHEMA_VERSION,
+        MULTIPLICITY_REPORT_SCHEMA_VERSION,
+        CURRENT_REPORT_SCHEMA_VERSION,
     }
     if schema_version in scoring_schemas and "scoring_version" not in score_data:
         raise ScoringReportValidationError(

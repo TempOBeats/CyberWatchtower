@@ -8,7 +8,9 @@ from enum import Enum
 from typing import Mapping
 
 
-CURRENT_REPORT_SCHEMA_VERSION = "1.5"
+CURRENT_REPORT_SCHEMA_VERSION = "1.6"
+POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION = "1.6"
+MULTIPLICITY_REPORT_SCHEMA_VERSION = "1.5"
 SCORING_REPORT_SCHEMA_VERSION = "1.4"
 REACHABILITY_REPORT_SCHEMA_VERSION = "1.3"
 APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION = "1.2"
@@ -34,6 +36,8 @@ class ScanDomain(str, Enum):
     FIREWALL_INBOUND_POLICY = "firewall_inbound_policy"
     NETWORK_SOCKET_INSPECTION = "network_socket_inspection"
     NETWORK_REACHABILITY = "network_reachability"
+    HOST_FIREWALL_RULE_COLLECTION = "host_firewall_rule_collection"
+    HOST_FIREWALL_RULE_APPLICABILITY = "host_firewall_rule_applicability"
 
 
 LEGACY_ASSESSMENT_DOMAINS: tuple[ScanDomain, ...] = (
@@ -71,6 +75,12 @@ COVERAGE_LIMITATION_MESSAGES: dict[ScanDomain, str] = {
     ),
     ScanDomain.NETWORK_REACHABILITY: (
         "listener reachability was not completely assessed"
+    ),
+    ScanDomain.HOST_FIREWALL_RULE_COLLECTION: (
+        "host firewall rules were not completely collected"
+    ),
+    ScanDomain.HOST_FIREWALL_RULE_APPLICABILITY: (
+        "host firewall rule applicability was not completely assessed"
     ),
 }
 
