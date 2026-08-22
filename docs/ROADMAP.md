@@ -137,7 +137,21 @@ privacy, and failure tests on supported Windows environments.
 **Non-goals:** GUI, remote management, log ingestion, EDR behavior, remediation,
 and macOS collection.
 
-### v0.5 — macOS platform adapter
+### v0.5 — Effective network exposure
+
+**Objective:** Distinguish local bind exposure from bounded host-firewall rule
+applicability without overstating end-to-end reachability.
+
+**Current phase:** Phase 1 platform-neutral contracts and schema 1.6 are
+complete. Phase 2A provides the Windows rule API contract, fake fixtures, and
+pure normalization boundary only. Native `INetFwRules` enumeration and
+production adapter routing remain pending later review.
+
+**Trust gate:** fixed-purpose read-only APIs, current-policy authority labeling,
+closed applicability results, opaque application/interface identities, bounded
+rule acquisition, and no model- or title-derived policy conclusions.
+
+### v0.6 — macOS platform adapter
 
 **Objective:** Add conservative macOS collection through the same contracts.
 

@@ -285,6 +285,35 @@ Socket disappearance and finding resolution continue to depend on
 changes are attributes of the same durable listener condition and do not alter
 finding identity. Scoring v2 ignores the new policy metadata in this phase.
 
+### Windows Firewall rule fake boundary
+
+v0.5 Phase 2A adds a non-native `WindowsFirewallRulesApiProtocol` with one
+fixed-purpose `collect_firewall_rules()` method, private bounded raw DTOs, typed
+closed result states, deterministic fake fixtures, and a pure Windows-to-neutral
+normalizer. The data source is explicitly `CURRENT_POLICY_VIEW`; it is not
+described as effective merged policy. `NativeWindowsApi`,
+`WindowsPlatformAdapter`, scanner routing, reports, memory, scoring, Advisor,
+briefing, and CLI do not consume this seam in Phase 2A.
+
+Transient application paths and interface identities are redacted in
+representations, are not JSON serializable, and are immediately reduced to
+domain-separated SHA-256 identities during normalization. Rule names,
+descriptions, native errors, COM objects, and arbitrary metadata are absent.
+Normalization supports the closed profile, direction, action, protocol,
+port/range, IPv4/IPv6 address, application/service, interface-type, and edge
+traversal fields. Unsupported native predicates and conditional remote address
+or port scopes are retained as closed unsupported-feature codes rather than
+dropped.
+
+Phase 2B must explicitly own and release COM initialization, policy/rule
+collections, enumerators, per-iteration rule objects, BSTRs, VARIANTs, and
+SAFEARRAYs, including every partial, validation, limit, and deadline failure
+path. Enumeration reuses the 8,192-rule and neutral condition/value/token
+bounds. In-process COM property getters are recorded as non-preemptible; Phase
+2B must accept and document that limitation or obtain separate approval for a
+safe isolation design. Phase 2A does not load COM, enumerate `INetFwRules`, or
+claim production firewall-rule coverage.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
