@@ -103,8 +103,9 @@ The v0.4 Phase 2 system collector normalizes a bounded Windows hostname,
 kernel version/build, native architecture, and optional current-user display
 label into `SystemObservation`. The read-only native facade loads system DLLs
 and the registry only inside explicit calls on Windows. It executes no command,
-requests no elevation, and remains import-safe on other platforms. Full Windows
-scanner selection is still disabled.
+requests no elevation, and remains import-safe on other platforms. Phase 2 did
+not enable full Windows scanner selection; the later assembled adapter now owns
+that integration.
 
 Stable identity is read from the local `MachineGuid` registry value under
 `HKLM\SOFTWARE\Microsoft\Cryptography`. The raw value exists only in the
@@ -119,8 +120,8 @@ properly generalized clone should receive a distinct identity, while an
 improper clone or VM snapshot may preserve it and collide. Reinstallation may
 produce a new identity; ordinary hardware changes should not. Phase 2 does not
 attempt clone detection. Portable fake-driven coverage is verified on Linux;
-real native calls require separate execution on a Windows host and are not
-claimed as locally validated by this milestone.
+the completed v0.4 validation also exercised the native identity path on one
+Windows 11 x64 host.
 
 ### Windows listeners and attribution
 
@@ -185,8 +186,8 @@ available but is not substituted for the default inbound action.
 affected by Group Policy. Phase 4 does not enumerate policy layers or claim
 which administrative source supplied a value. It reports only the bounded
 current profile facts returned by that interface. Portable fixtures are
-verified on Linux; the guarded read-only native test remains skipped there, so
-actual Windows runtime behavior is not claimed as locally validated.
+verified on Linux; the completed v0.4 validation also exercised this read-only
+native interface on one Windows 11 x64 host.
 
 ### Windows adapter and deterministic interpretation
 
@@ -208,25 +209,35 @@ shared deterministic network interpreter.
 
 Raw identity, executable paths, native errors, COM objects, buffers, and SCM
 diagnostics do not cross the native boundary into reports, history, memory,
-Advisor, Intelligence Core, or provider data. Schema 1.2 and the existing memory
-schema are sufficient; no migration is required.
+Advisor, Intelligence Core, or provider data. The adapter integration required
+no Windows-specific persistence model; current reports use schema 1.5 and
+Persistent Security Memory uses schema 8.
 
-The Windows path is **implemented and validated on one real Windows 11 x64
-host**, while remaining experimental/pre-release rather than universally
-validated. Read-only native system collection, endpoint collection, Windows
-Firewall profile collection, and the assembled `WindowsPlatformAdapter` all
-completed successfully. The production scan completed Scoring v2, wrote a
-schema 1.5 report, rendered the v1-to-v2 methodology transition correctly, and
-ingested the v2 report into Persistent Security Memory. The UDPv4 multiplicity
-path also handled a real two-instance, PID-distinct condition as one durable
-finding with `runtime_instance_count = 2`.
+The Windows v0.4 path is **validated on one real Windows 11 x64 host**, while
+remaining experimental/pre-release rather than universally validated.
+Read-only native system collection; TCP and UDP IPv4/IPv6 endpoint-table
+collection; Windows Firewall profile collection; and the assembled
+`WindowsPlatformAdapter` all completed successfully. Exact native UDPv4 and
+UDPv6 duplicates were handled conservatively as representational multiplicity
+only after strict table validation, leaving complete listening-service
+inspection coverage. A PID-distinct two-instance condition was represented as
+one durable finding with `runtime_instance_count = 2`, without destabilizing
+finding identity or score.
+
+The production scan completed Scoring v2, wrote a schema 1.5 report, ingested
+it through memory schema 8, retained history, and produced the expected
+same-version v2 trend comparison. Advisor and presentation projections also
+completed successfully. The remaining `PARTIAL` assessment assurance is
+intentional: effective firewall-rule applicability and active listener
+reachability are not yet assessed.
 
 This validation covers one host, not every supported Windows release,
 architecture, network configuration, or policy environment. It did not test
-active remote reachability or enumerate firewall-rule applicability. No
-remediation, firewall modification, elevation, or active network testing was
-performed. Native CI remains deferred until a narrowly read-only Windows job
-can be reviewed without running a full security scan of a public runner.
+active remote reachability or enumerate effective firewall-rule applicability.
+No remediation, firewall modification, privileged exploitation, external
+scanning, or offensive behavior was performed. Native CI remains deferred until
+a narrowly read-only Windows job can be reviewed without running a full
+security scan of a public runner.
 
 Normal CLI output presents a compact projection of the canonical Scoring v2
 breakdown: final score, assurance, effective deduction, category totals,
