@@ -249,6 +249,42 @@ recurring/new-finding displays may group equivalent listener conditions for
 readability while retaining every underlying canonical finding ID and leaving
 saved reports and lifecycle counts unchanged.
 
+## Effective network exposure contract boundary
+
+v0.5 Phase 1 defines only the dependency-free, platform-neutral rule and
+listener-applicability contracts. It does not enumerate Windows Firewall,
+nftables, or iptables rules and does not change the current collectors. The
+closed rule model retains normalized technology, enablement, direction, action,
+profiles, protocol, bounded port/address predicates, opaque application or
+interface digests, canonical service identity, edge-traversal state, and closed
+unsupported-feature codes. Native rule names, descriptions, executable paths,
+user/domain values, native errors, raw command output, and platform objects are
+not members of the contract.
+
+The pure evaluator treats disabled and outbound rules as non-applicable. It
+evaluates profile, protocol, local port/address, interface, and application or
+service predicates without title or evidence parsing. Unsupported predicates,
+restricted remote-address predicates, missing required attribution, and
+unproven precedence remain indeterminate. A complete, universally applicable
+explicit block can derive `BLOCKED_BY_OBSERVED_POLICY`; a matching allow remains
+`POTENTIALLY_REACHABLE` because host policy permission is not end-to-end
+reachability proof. `CONFIRMED_REACHABLE` remains unavailable without a later,
+separately approved evidence source.
+
+Schema 1.6 adds the `host_firewall_rule_collection` and
+`host_firewall_rule_applicability` coverage domains and permits only a bounded
+listener-level policy summary in `network_context`: a closed applicability
+result, closed basis codes, optional semantic rule digests, and the two policy
+coverage states. Full rule inventories are not report content. Schemas 1.0
+through 1.5 remain readable and never infer rule applicability. The current
+scanner does not declare the new domains applicable until a future collector is
+integrated, and no memory migration is required for this additive report data.
+
+Socket disappearance and finding resolution continue to depend on
+`network_socket_inspection`, not rule or reachability coverage. Policy-state
+changes are attributes of the same durable listener condition and do not alter
+finding identity. Scoring v2 ignores the new policy metadata in this phase.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
