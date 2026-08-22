@@ -202,7 +202,7 @@ class ProductionScannerV2Tests(unittest.TestCase):
                     datetime(2026, 8, 1, tzinfo=timezone.utc),
                     datetime.now(timezone.utc),
                 ))
-        self.assertEqual(current["schema_version"], "1.5")
+        self.assertEqual(current["schema_version"], "1.6")
         self.assertEqual(current["security_score"]["scoring_version"], "2")
         self.assertIn("breakdown", current["security_score"])
         self.assertEqual((comparison["trend"], comparison["change"]),

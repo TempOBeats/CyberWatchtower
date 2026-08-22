@@ -208,7 +208,7 @@ class CanonicalFindingMultiplicityTests(unittest.TestCase):
             path = save_json_report(result, directory)
             report = json.loads(path.read_text(encoding="utf-8"))
         normalized, _ = normalize_report(report)
-        self.assertEqual(report["schema_version"], "1.5")
+        self.assertEqual(report["schema_version"], "1.6")
         self.assertEqual(
             max(item.runtime_instance_count for item in normalized.findings), 2
         )
