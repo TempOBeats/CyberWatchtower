@@ -46,9 +46,10 @@ from .firewall_rule_models import (
     WindowsRawFirewallRuleDirection,
     WindowsRawFirewallUnsupportedFeature,
 )
+from .firewall_com_contracts import MAX_PROPERTY_GETTERS_PER_RULE
 
 
-WINDOWS_FIREWALL_MAX_GETTER_OPERATIONS_PER_RULE = 20
+WINDOWS_FIREWALL_MAX_GETTER_OPERATIONS_PER_RULE = MAX_PROPERTY_GETTERS_PER_RULE
 
 
 class WindowsComOwnershipRequirement(str, Enum):
