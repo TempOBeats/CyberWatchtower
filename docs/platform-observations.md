@@ -305,14 +305,29 @@ traversal fields. Unsupported native predicates and conditional remote address
 or port scopes are retained as closed unsupported-feature codes rather than
 dropped.
 
-Phase 2B must explicitly own and release COM initialization, policy/rule
-collections, enumerators, per-iteration rule objects, BSTRs, VARIANTs, and
-SAFEARRAYs, including every partial, validation, limit, and deadline failure
-path. Enumeration reuses the 8,192-rule and neutral condition/value/token
-bounds. In-process COM property getters are recorded as non-preemptible; Phase
-2B must accept and document that limitation or obtain separate approval for a
-safe isolation design. Phase 2A does not load COM, enumerate `INetFwRules`, or
-claim production firewall-rule coverage.
+Phase 2B.1 freezes portable, mock-only COM ABI and lifetime contracts. They
+cover fixed GUIDs and vtable slots, COM initialization ownership, explicit
+interface releases, BSTR freeing, VARIANT clearing, SAFEARRAY ownership, and
+separate operation accounting. The approved property surface contains 21
+named getters. The per-rule property-getter ceiling is 22, leaving one
+conservative reserved budget slot that does not authorize another getter;
+QueryInterface, enumeration, release, and initialization operations are
+accounted separately.
+
+Production native rule collection must use a fixed-purpose isolated helper
+process because an in-process COM getter cannot be reliably preempted. An
+in-process collector and a same-process worker thread are rejected as
+production containment boundaries. This is a narrow exception to the process
+execution prohibition: generic, arbitrary, shell-mediated, and user-controlled
+execution remains prohibited. Phase 2B.1 does not implement or launch the
+helper, load COM, call `CoCreateInstance`, enumerate `INetFwRules`, or route
+rule collection into production. Future enumeration must still release policy
+and rule collections, enumerators, per-iteration rule objects, BSTRs, VARIANTs,
+and SAFEARRAYs on every returning path and reuse the 8,192-rule and neutral
+condition/value/token bounds.
+
+Rule authority remains `CURRENT_POLICY_VIEW`. Phase 2B.1 makes no effective
+merged-policy claim and does not establish firewall-rule coverage.
 
 Future adapters must:
 

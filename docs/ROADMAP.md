@@ -144,8 +144,13 @@ applicability without overstating end-to-end reachability.
 
 **Current phase:** Phase 1 platform-neutral contracts and schema 1.6 are
 complete. Phase 2A provides the Windows rule API contract, fake fixtures, and
-pure normalization boundary only. Native `INetFwRules` enumeration and
-production adapter routing remain pending later review.
+pure normalization boundary. Phase 2B.1 freezes portable/mock-only Windows COM
+ABI, ownership, cleanup, getter-allowlist, and operation-accounting contracts.
+It performs no native `INetFwRules` enumeration and adds no production routing.
+Future production collection must use the approved fixed-purpose isolated
+helper boundary; in-process COM and same-process thread containment are rejected
+because a blocked native getter cannot be reliably terminated. The helper
+itself remains unimplemented and requires a later approved phase.
 
 **Trust gate:** fixed-purpose read-only APIs, current-policy authority labeling,
 closed applicability results, opaque application/interface identities, bounded
