@@ -345,6 +345,27 @@ Phase 2B.2 still does not load COM, call `CoCreateInstance`, enumerate
 Authority remains `CURRENT_POLICY_VIEW`; no effective-policy or rule-coverage
 claim is introduced.
 
+Phase 2B.3 adds a portable, mock-only collection engine for one already-owned
+Rules collection. It validates Count, obtains the fixed `_NewEnum` and
+`IEnumVARIANT` interfaces, accepts only one typed dispatch element per `Next`,
+and delegates every acquired Rule to the Phase 2B.2 reader. Count is advisory:
+an exact Count/enumeration match is required for `COMPLETE`; early termination,
+over-enumeration, or collection mutation produces `COLLECTION_INCOMPLETE` with
+no retained raw prefix. Enumeration is bounded to 8,195 collection operations
+(8,192 rules plus Count, `_NewEnum`, and terminal `Next`).
+
+All raw rules are structurally validated before the existing pure normalizer
+checks semantic identities. Exact normalized duplicates retain the previously
+approved normalization behavior; semantic identity collisions fail closed.
+Per-element VARIANTs and acquired Rule/Rule2/Rule3 interfaces are cleaned up on
+every path, followed by the enumerator, `_NewEnum`, and Rules collection in
+reverse ownership order.
+
+Phase 2B.3 does not load or activate COM, enumerate the real Windows Firewall
+collection, implement the isolated helper, or alter production routing. It
+does not claim snapshot atomicity or effective policy. Authority remains
+`CURRENT_POLICY_VIEW`.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;

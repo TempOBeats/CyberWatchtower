@@ -148,8 +148,10 @@ pure normalization boundary. Phase 2B.1 freezes portable/mock-only Windows COM
 ABI, ownership, cleanup, getter-allowlist, and operation-accounting contracts.
 Phase 2B.2 adds a portable single-rule reader over fixed mocked interfaces,
 validating deterministic extraction, capability fallback, cleanup, and private
-value handling. Both phases perform no native `INetFwRules` enumeration and add
-no production routing.
+value handling. Phase 2B.3 adds a portable mock-only Rules/`IEnumVARIANT`
+collection engine with bounded Count consistency, one-rule delegation, and
+deterministic cleanup. These phases perform no native `INetFwRules` enumeration
+and add no production routing.
 Future production collection must use the approved fixed-purpose isolated
 helper boundary; in-process COM and same-process thread containment are rejected
 because a blocked native getter cannot be reliably terminated. The helper
