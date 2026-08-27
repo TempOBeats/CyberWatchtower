@@ -329,6 +329,22 @@ condition/value/token bounds.
 Rule authority remains `CURRENT_POLICY_VIEW`. Phase 2B.1 makes no effective
 merged-policy claim and does not establish firewall-rule coverage.
 
+Phase 2B.2 adds a portable, mock-only reader for one already-acquired rule. It
+calls base getters in a fixed order, reads ICMP conditions only for ICMP
+protocols, prefers the Rule2 edge-traversal option when available, uses the
+base fallback otherwise, and treats unavailable Rule3 predicate visibility as
+undecidable. Each acquired Rule2/Rule3 interface and the base Rule interface is
+released explicitly in reverse order; BSTR and VARIANT/SAFEARRAY ownership is
+also closed deterministically on success and failure. Private application paths,
+interface identities, predicate values, and native failures remain redacted.
+The reader returns only the existing private `RawWindowsFirewallRule` or a
+closed sanitized failure and can feed the existing pure normalizer in tests.
+
+Phase 2B.2 still does not load COM, call `CoCreateInstance`, enumerate
+`INetFwRules`, implement the isolated helper, or alter production routing.
+Authority remains `CURRENT_POLICY_VIEW`; no effective-policy or rule-coverage
+claim is introduced.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;

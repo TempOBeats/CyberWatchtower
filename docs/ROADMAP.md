@@ -146,7 +146,10 @@ applicability without overstating end-to-end reachability.
 complete. Phase 2A provides the Windows rule API contract, fake fixtures, and
 pure normalization boundary. Phase 2B.1 freezes portable/mock-only Windows COM
 ABI, ownership, cleanup, getter-allowlist, and operation-accounting contracts.
-It performs no native `INetFwRules` enumeration and adds no production routing.
+Phase 2B.2 adds a portable single-rule reader over fixed mocked interfaces,
+validating deterministic extraction, capability fallback, cleanup, and private
+value handling. Both phases perform no native `INetFwRules` enumeration and add
+no production routing.
 Future production collection must use the approved fixed-purpose isolated
 helper boundary; in-process COM and same-process thread containment are rejected
 because a blocked native getter cannot be reliably terminated. The helper
