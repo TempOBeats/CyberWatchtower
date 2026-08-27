@@ -68,6 +68,16 @@ from .firewall_rules import (
     normalize_windows_firewall_rules,
     windows_application_identity,
 )
+from .firewall_rule_reader import (
+    WindowsComInterfaceAvailability,
+    WindowsFirewallRule2Query,
+    WindowsFirewallRule2ReaderProtocol,
+    WindowsFirewallRule3Query,
+    WindowsFirewallRule3ReaderProtocol,
+    WindowsFirewallRuleReaderProtocol,
+    WindowsFirewallSingleRuleReadResult,
+    read_windows_firewall_rule,
+)
 from .models import (
     RawFirewallProfile,
     RawMachineIdentity,
@@ -143,6 +153,13 @@ __all__ = [
     "WindowsComOwnershipRequirement",
     "WindowsFirewallComEnumerationContract",
     "WindowsFirewallRuleNormalizationResult",
+    "WindowsComInterfaceAvailability",
+    "WindowsFirewallRule2Query",
+    "WindowsFirewallRule2ReaderProtocol",
+    "WindowsFirewallRule3Query",
+    "WindowsFirewallRule3ReaderProtocol",
+    "WindowsFirewallRuleReaderProtocol",
+    "WindowsFirewallSingleRuleReadResult",
     "WindowsFirewallPropertyGetter",
     "WindowsFirewallRuleInterfacePlan",
     "WindowsOwnedBstr",
@@ -158,6 +175,7 @@ __all__ = [
     "collect_windows_firewall_inbound_policy",
     "collect_windows_firewall_technology",
     "normalize_windows_firewall_rules",
+    "read_windows_firewall_rule",
     "windows_application_identity",
     "read_bounded_native_table",
 ]
