@@ -397,7 +397,7 @@ to drain the pipe, so oversized output cannot create unbounded parent memory or
 deadlock the child. The parent enforces the 15-second deadline, termination,
 one-second grace, forced kill, and bounded reap behavior from Phase 2B.4.
 
-The real helper still uses only a deterministic empty fake backend:
+Phase 2B.5 validated this transport with a deterministic empty fake backend:
 
 ```text
 main CyberWatchtower process
@@ -409,11 +409,23 @@ main CyberWatchtower process
  deterministic fake backend only
 ```
 
-It activates no COM, acquires no Windows Firewall policy object, enumerates no
-native rules, and remains disconnected from NativeWindowsApi,
-WindowsPlatformAdapter, scanning, reachability, reports, memory, scoring, and
-providers. Native COM activation is reserved for a later separately reviewed
-phase.
+Phase 2B.6 places the first native Windows Firewall COM collector inside that
+same isolated helper. The collector uses only fixed `CoInitializeEx` and
+`CoCreateInstance` inputs, obtains `INetFwPolicy2.Rules`, and delegates the
+owned Rules collection through the Phase 2B.3 engine and Phase 2B.2 reader. COM
+initialization, Policy2, Rules, enumerator, per-rule interfaces, BSTRs,
+VARIANTs, and SAFEARRAY-backed values retain their frozen explicit cleanup
+contracts. Raw application paths and interface identities remain private to
+the helper/IPC raw boundary and are digested by the existing Phase 2A
+normalizer before becoming platform-neutral observations.
+
+Native collection remains `CURRENT_POLICY_VIEW`, not an effective-policy
+claim. It is not exposed through NativeWindowsApi or WindowsPlatformAdapter and
+cannot influence scanning, reachability, findings, reports, memory, scoring,
+Advisor, briefing, or providers. A guarded Windows validation test is skipped
+unless explicitly enabled; Phase 2B.6 portable verification does not run live
+COM or native firewall collection. Production security-decision routing is
+reserved for a later separately reviewed phase.
 
 Future adapters must:
 

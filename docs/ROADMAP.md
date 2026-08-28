@@ -154,12 +154,17 @@ deterministic cleanup. Phase 2B.4 freezes bounded JSON envelopes and a
 parent-owned timeout/terminate/kill/reap lifecycle behind mock-only typed seams.
 Phase 2B.5 implements the real fixed-purpose OS-process transport with bounded
 pipes, minimal environment, hard parent deadline, termination, kill, and reap,
-but its child uses only a deterministic non-native fake backend. These phases
-perform no native `INetFwRules` enumeration and add no production routing.
+using a deterministic non-native fake backend. Phase 2B.6 adds the first fixed
+native COM activation and `INetFwRules` collection path, confined to that
+isolated helper and delegated through the frozen single-rule reader and
+enumeration engine. It is not routed into platform adapters, scans,
+reachability, reports, memory, scoring, or providers, and guarded native
+validation remains separately opt-in. These phases add no production security
+decision authority.
 Future production collection must use the approved fixed-purpose isolated
 helper boundary; in-process COM and same-process thread containment are rejected
-because a blocked native getter cannot be reliably terminated. The helper
-native collector and its integration remain unimplemented and require a later
+because a blocked native getter cannot be reliably terminated. Adapter and
+security-decision integration remain unimplemented and require a later
 approved phase.
 
 **Trust gate:** fixed-purpose read-only APIs, current-policy authority labeling,
