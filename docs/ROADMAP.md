@@ -150,12 +150,15 @@ Phase 2B.2 adds a portable single-rule reader over fixed mocked interfaces,
 validating deterministic extraction, capability fallback, cleanup, and private
 value handling. Phase 2B.3 adds a portable mock-only Rules/`IEnumVARIANT`
 collection engine with bounded Count consistency, one-rule delegation, and
-deterministic cleanup. These phases perform no native `INetFwRules` enumeration
-and add no production routing.
+deterministic cleanup. Phase 2B.4 freezes bounded JSON envelopes and a
+parent-owned timeout/terminate/kill/reap lifecycle behind mock-only typed seams.
+These phases perform no native `INetFwRules` enumeration and add no production
+routing.
 Future production collection must use the approved fixed-purpose isolated
 helper boundary; in-process COM and same-process thread containment are rejected
 because a blocked native getter cannot be reliably terminated. The helper
-itself remains unimplemented and requires a later approved phase.
+launcher and native collector remain unimplemented and require a later approved
+phase.
 
 **Trust gate:** fixed-purpose read-only APIs, current-policy authority labeling,
 closed applicability results, opaque application/interface identities, bounded

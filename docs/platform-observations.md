@@ -366,6 +366,28 @@ collection, implement the isolated helper, or alter production routing. It
 does not claim snapshot atomicity or effective policy. Authority remains
 `CURRENT_POLICY_VIEW`.
 
+Phase 2B.4 freezes the portable, mock-only isolation and IPC contracts for the
+future fixed-purpose helper. One closed request and a versioned, bounded JSON
+response carry only the existing validated raw-rule shape and closed result
+codes. Unknown or duplicate fields fail closed. Requests are limited to 256
+bytes, responses to 8 MiB, nesting to six levels, and rules to 8,192. Private
+application paths and interface identities may cross this local boundary only
+inside opaque redacted payloads and private raw types; the existing normalizer
+digests them before platform-neutral output.
+
+The parent owns a fixed 15-second deadline and requires terminate, bounded
+grace, forced kill when needed, and reap. Phase 2B.4 defines only typed
+launcher/process protocols and portable fakes. It adds no subprocess launcher,
+IPC endpoint, COM activation, real rule enumeration, or production routing.
+Authority remains `CURRENT_POLICY_VIEW`, not effective policy.
+
+A future launcher must select one built-in helper identity with no caller-set
+executable, module, arguments, environment, working directory, or IPC target.
+It must disable shell mediation, forward no secrets or user input, provide only
+the minimal environment needed to start the helper, grant no network or write
+authority, and terminate then reap the child at the parent-owned deadline. The
+helper is fixed-purpose, read-only, and cannot modify firewall state.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;
