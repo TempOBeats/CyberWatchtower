@@ -113,6 +113,7 @@ from .firewall_rule_ipc import (
     encode_windows_firewall_helper_response,
     run_isolated_windows_firewall_helper,
 )
+from .firewall_rule_transport import WindowsFirewallSubprocessLauncher
 from .models import (
     RawFirewallProfile,
     RawMachineIdentity,
@@ -204,6 +205,7 @@ __all__ = [
     "WindowsFirewallNewEnumProtocol",
     "WindowsFirewallRuleElementProtocol",
     "WindowsFirewallRulesCollectionProtocol",
+    "WindowsFirewallSubprocessLauncher",
     "WINDOWS_FIREWALL_HELPER_TERMINATION_GRACE_MS",
     "WINDOWS_FIREWALL_HELPER_TIMEOUT_MS",
     "WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION",
