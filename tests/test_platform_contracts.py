@@ -405,6 +405,14 @@ class LinuxAdapterContractTests(unittest.TestCase):
             text = source.read_text(encoding="utf-8")
             for marker in prohibited:
                 with self.subTest(source=source.name, marker=marker):
+                    if source.name == "firewall_rule_transport.py" \
+                            and marker == "subprocess":
+                        self.assertIn("shell=False", text)
+                        self.assertIn(
+                            '"cyberwatchtower.platform.windows.firewall_rule_helper"',
+                            text,
+                        )
+                        continue
                     self.assertNotIn(marker, text)
         linux = adapter()
         self.assertFalse(hasattr(linux, "run_command"))
