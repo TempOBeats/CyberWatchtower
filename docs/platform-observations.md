@@ -388,6 +388,33 @@ the minimal environment needed to start the helper, grant no network or write
 authority, and terminate then reap the child at the parent-owned deadline. The
 helper is fixed-purpose, read-only, and cannot modify firewall state.
 
+Phase 2B.5 implements that real local OS-process transport using the Python
+standard library. The parent launches one fixed isolated module with
+`shell=False`, a minimal allowlisted environment, closed stdin/stdout pipes,
+discarded stderr, and no caller-controlled process settings. A concurrent
+bounded reader retains at most 8 MiB plus one detection byte while continuing
+to drain the pipe, so oversized output cannot create unbounded parent memory or
+deadlock the child. The parent enforces the 15-second deadline, termination,
+one-second grace, forced kill, and bounded reap behavior from Phase 2B.4.
+
+The real helper still uses only a deterministic empty fake backend:
+
+```text
+main CyberWatchtower process
+        |
+ bounded closed IPC
+        |
+ isolated helper process
+        |
+ deterministic fake backend only
+```
+
+It activates no COM, acquires no Windows Firewall policy object, enumerates no
+native rules, and remains disconnected from NativeWindowsApi,
+WindowsPlatformAdapter, scanning, reachability, reports, memory, scoring, and
+providers. Native COM activation is reserved for a later separately reviewed
+phase.
+
 Future adapters must:
 
 - implement the same typed protocol without falling back to Linux behavior;

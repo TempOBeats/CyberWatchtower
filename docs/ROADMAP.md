@@ -152,13 +152,15 @@ value handling. Phase 2B.3 adds a portable mock-only Rules/`IEnumVARIANT`
 collection engine with bounded Count consistency, one-rule delegation, and
 deterministic cleanup. Phase 2B.4 freezes bounded JSON envelopes and a
 parent-owned timeout/terminate/kill/reap lifecycle behind mock-only typed seams.
-These phases perform no native `INetFwRules` enumeration and add no production
-routing.
+Phase 2B.5 implements the real fixed-purpose OS-process transport with bounded
+pipes, minimal environment, hard parent deadline, termination, kill, and reap,
+but its child uses only a deterministic non-native fake backend. These phases
+perform no native `INetFwRules` enumeration and add no production routing.
 Future production collection must use the approved fixed-purpose isolated
 helper boundary; in-process COM and same-process thread containment are rejected
 because a blocked native getter cannot be reliably terminated. The helper
-launcher and native collector remain unimplemented and require a later approved
-phase.
+native collector and its integration remain unimplemented and require a later
+approved phase.
 
 **Trust gate:** fixed-purpose read-only APIs, current-policy authority labeling,
 closed applicability results, opaque application/interface identities, bounded
