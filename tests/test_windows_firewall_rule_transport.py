@@ -29,18 +29,26 @@ _FIXTURE = Path(__file__).parent / "fixtures/windows_firewall_helper_fault.py"
 
 
 class RealHelperTransportTests(unittest.TestCase):
-    def test_fixed_helper_empty_success_is_deterministic_and_reaped(self):
+    def test_fixed_helper_is_deterministic_and_reaped(self):
         results = []
         for _ in range(2):
             lifecycle = WindowsFirewallHelperLifecycle()
-            result = run_isolated_windows_firewall_helper(
-                WindowsFirewallSubprocessLauncher(), lifecycle=lifecycle)
+            with self._scenario("empty_complete"):
+                result = run_isolated_windows_firewall_helper(
+                    WindowsFirewallSubprocessLauncher(), lifecycle=lifecycle)
             self.assertEqual(result.state, WindowsFirewallRuleResultCode.COMPLETE)
             self.assertEqual(result.rules, ())
             self.assertEqual(lifecycle.events[-1],
                              WindowsFirewallHelperLifecycleState.REAPED)
             results.append(result)
         self.assertEqual(results[0], results[1])
+
+    @unittest.skipIf(sys.platform == "win32", "portable test avoids native COM")
+    def test_fixed_production_helper_is_closed_when_api_is_unavailable(self):
+        result = run_isolated_windows_firewall_helper(
+            WindowsFirewallSubprocessLauncher())
+        self.assertEqual(result.state,
+                         WindowsFirewallRuleResultCode.API_UNAVAILABLE)
 
     def test_one_many_rules_and_closed_failure_cross_real_process(self):
         for scenario, count in (("one_rule", 1), ("many_rules", 64)):
@@ -162,7 +170,7 @@ class RealHelperTransportTests(unittest.TestCase):
             self.assertEqual(stdout, b"")
             self.assertEqual(stderr, b"")
 
-    def test_launcher_surface_is_fixed_and_module_has_no_native_authority(self):
+    def test_launcher_is_fixed_and_native_authority_is_helper_confined(self):
         with self.assertRaises(TypeError):
             WindowsFirewallSubprocessLauncher("arbitrary")
         root = Path(__file__).resolve().parents[1]
@@ -170,16 +178,28 @@ class RealHelperTransportTests(unittest.TestCase):
                      "firewall_rule_transport.py").read_text()
         helper = (root / "src/cyberwatchtower/platform/windows/"
                   "firewall_rule_helper.py").read_text()
-        combined = (transport + helper).casefold()
+        native = (root / "src/cyberwatchtower/platform/windows/"
+                  "firewall_rule_native.py").read_text()
+        transport_folded = transport.casefold()
         for prohibited in (
             "cocreateinstance", "inetfwrules", "win32com", "comtypes",
             "powershell", "netsh", "wmi", "winreg", "shell=true", "eval(",
             "exec(", "pickle", "marshal", "socket.",
         ):
-            self.assertNotIn(prohibited, combined)
+            self.assertNotIn(prohibited, transport_folded)
+        self.assertIn("firewall_rule_native", helper)
+        for prohibited in (
+            "GetIDsOfNames", "Invoke", "get_Name", "get_Description",
+            "get_Grouping", "get_LocalUserOwner", "PowerShell", "netsh",
+            "winreg", "socket.", "put_", ".Add(", ".Remove(", ".Item(",
+        ):
+            self.assertNotIn(prohibited, native)
         for production in ("api_native.py", "adapter.py"):
             text = (root / "src/cyberwatchtower/platform/windows" / production).read_text()
+            self.assertNotIn("firewall_rule_native", text)
             self.assertNotIn("firewall_rule_transport", text)
+        self.assertNotIn("firewall_rule_native",
+                         (root / "src/cyberwatchtower/scanner.py").read_text())
         self.assertNotIn("firewall_rule_transport",
                          (root / "src/cyberwatchtower/scanner.py").read_text())
 

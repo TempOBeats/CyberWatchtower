@@ -38,6 +38,9 @@ def main():
     if scenario == "helper_failure":
         sys.stdout.buffer.write(_closed_response("API_UNAVAILABLE"))
         return 0
+    if scenario == "empty_complete":
+        sys.stdout.buffer.write(_closed_response())
+        return 0
     if scenario == "malformed":
         sys.stdout.buffer.write(b'{"PRIVATE_NATIVE_ERROR":')
         return 2
