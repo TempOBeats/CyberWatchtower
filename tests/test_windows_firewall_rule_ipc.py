@@ -16,10 +16,15 @@ from cyberwatchtower.platform.windows.firewall_rule_ipc import (
     WindowsFirewallHelperWaitState,
     WindowsFirewallIpcPayload,
     WindowsFirewallIpcPayloadKind,
+    WindowsFirewallIpcV2Request,
+    WindowsFirewallIpcV2Response,
     decode_windows_firewall_helper_request,
     decode_windows_firewall_helper_response,
     encode_windows_firewall_helper_request,
     encode_windows_firewall_helper_response,
+    decode_windows_firewall_ipc_v2_request,
+    encode_windows_firewall_ipc_v2_response,
+    windows_firewall_raw_rule_to_ipc_v2,
     run_isolated_windows_firewall_helper,
 )
 from cyberwatchtower.platform.windows.firewall_com_contracts import (
@@ -55,6 +60,13 @@ def _response(rules=(), state=WindowsFirewallRuleResultCode.COMPLETE):
         state, WindowsFirewallPolicyView.CURRENT_POLICY_VIEW, tuple(rules))
     return WindowsFirewallHelperResponse(
         "1", WindowsFirewallPolicyView.CURRENT_POLICY_VIEW, result)
+
+
+def _production_payload(rules=(), state=WindowsFirewallRuleResultCode.COMPLETE):
+    return encode_windows_firewall_ipc_v2_response(WindowsFirewallIpcV2Response(
+        "2", WindowsFirewallPolicyView.CURRENT_POLICY_VIEW, state,
+        tuple(windows_firewall_raw_rule_to_ipc_v2(rule) for rule in rules),
+    ))
 
 
 class _Process:
@@ -99,7 +111,9 @@ class _Launcher:
         self.fail = fail
 
     def start(self, request):
-        decode_windows_firewall_helper_request(request)
+        self.request = decode_windows_firewall_ipc_v2_request(request)
+        if self.request != WindowsFirewallIpcV2Request():
+            raise RuntimeError("unexpected fixed request")
         if self.fail:
             raise RuntimeError("PRIVATE_ENV_SECRET")
         return self.process
@@ -188,7 +202,7 @@ class SerializationTests(unittest.TestCase):
 
 class LifecycleTests(unittest.TestCase):
     def test_success_and_abnormal_exit(self):
-        payload = encode_windows_firewall_helper_response(_response())
+        payload = _production_payload()
         wait = WindowsFirewallHelperWaitResult(WindowsFirewallHelperWaitState.RESPONSE,
                                                payload)
         process = _Process(wait)
@@ -201,6 +215,19 @@ class LifecycleTests(unittest.TestCase):
         process = _Process(wait, exit_code=WindowsFirewallHelperExitCode.HELPER_FAILURE)
         self.assertEqual(run_isolated_windows_firewall_helper(_Launcher(process)).state,
                          WindowsFirewallRuleResultCode.INTERNAL_ERROR)
+
+    def test_fixed_parent_rejects_v1_response_without_fallback(self):
+        v1_payload = encode_windows_firewall_helper_response(_response())
+        process = _Process(WindowsFirewallHelperWaitResult(
+            WindowsFirewallHelperWaitState.RESPONSE, v1_payload
+        ))
+        launcher = _Launcher(process)
+        result = run_isolated_windows_firewall_helper(launcher)
+        self.assertEqual(result.state, WindowsFirewallRuleResultCode.UNSUPPORTED)
+        self.assertEqual(launcher.request.protocol_version, "2")
+        self.assertEqual(process.events, [
+            ("wait", WINDOWS_FIREWALL_HELPER_TIMEOUT_MS), "reap"
+        ])
 
     def test_timeout_terminates_or_kills_then_reaps(self):
         wait = WindowsFirewallHelperWaitResult(WindowsFirewallHelperWaitState.TIMEOUT)
@@ -231,7 +258,7 @@ class LifecycleTests(unittest.TestCase):
             _Launcher(process)).state, WindowsFirewallRuleResultCode.TIMEOUT)
 
     def test_protocol_exit_and_invalid_wait_are_sanitized(self):
-        payload = encode_windows_firewall_helper_response(_response())
+        payload = _production_payload()
         process = _Process(WindowsFirewallHelperWaitResult(
             WindowsFirewallHelperWaitState.RESPONSE, payload),
             exit_code=WindowsFirewallHelperExitCode.PROTOCOL_FAILURE)

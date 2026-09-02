@@ -10,10 +10,10 @@ from cyberwatchtower.platform.windows.firewall_rule_ipc import (
     MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES,
     WindowsFirewallHelperLifecycle,
     WindowsFirewallHelperLifecycleState,
-    WindowsFirewallHelperRequest,
+    WindowsFirewallIpcV2Request,
     WindowsFirewallIpcPayload,
     WindowsFirewallIpcPayloadKind,
-    encode_windows_firewall_helper_request,
+    encode_windows_firewall_ipc_v2_request,
     run_isolated_windows_firewall_helper,
 )
 from cyberwatchtower.platform.windows.firewall_rule_models import (
@@ -144,19 +144,21 @@ class RealHelperTransportTests(unittest.TestCase):
         self.assertNotIn("SECRET", repr(result))
 
     def test_real_helper_rejects_malformed_oversized_and_trailing_requests(self):
-        valid = encode_windows_firewall_helper_request(
-            WindowsFirewallHelperRequest()).consume_inside_boundary()
+        valid = encode_windows_firewall_ipc_v2_request(
+            WindowsFirewallIpcV2Request()).consume_inside_boundary()
         payloads = (
             b"{bad",
             b"x" * (MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES + 1),
             valid + valid,
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
-            b'"protocol_version":"1","extra":1}',
+            b'"protocol_version":"2","extra":1}',
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
             b'"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
-            b'"protocol_version":"1"}',
+            b'"protocol_version":"2"}',
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
             b'"protocol_version":"999"}',
+            b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
+            b'"protocol_version":"1"}',
         )
         for payload in payloads:
             process = _REAL_POPEN(

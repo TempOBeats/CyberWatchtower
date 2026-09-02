@@ -13,7 +13,7 @@ import time
 def _closed_response(result="COMPLETE", rules=None):
     return json.dumps({
         "authority": "CURRENT_POLICY_VIEW",
-        "protocol_version": "1",
+        "protocol_version": "2",
         "result": result,
         "rules": [] if rules is None else rules,
     }, sort_keys=True, separators=(",", ":")).encode()
@@ -50,7 +50,7 @@ def main():
     if scenario == "duplicate_keys":
         sys.stdout.buffer.write(b'{"authority":"CURRENT_POLICY_VIEW",'
                                 b'"authority":"CURRENT_POLICY_VIEW",'
-                                b'"protocol_version":"1","result":"COMPLETE","rules":[]}')
+                                b'"protocol_version":"2","result":"COMPLETE","rules":[]}')
         return 2
     if scenario == "unknown_field":
         value = json.loads(_closed_response())
@@ -86,7 +86,7 @@ def main():
             "action": "ALLOW", "application_path": None,
             "direction": "INBOUND", "edge_traversal": False,
             "enabled": True, "interface_types": [], "interfaces": [],
-            "local_addresses": ["*"], "local_ports": ["443"],
+            "local_addresses": [{"kind": "ANY"}], "local_ports": ["443"],
             "profile_mask": 4, "protocol": 6, "remote_addresses": [],
             "remote_ports": [], "service_name": None,
             "unsupported_features": [],

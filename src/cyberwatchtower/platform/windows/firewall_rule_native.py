@@ -40,8 +40,6 @@ from .firewall_rule_reader import (
     WindowsFirewallRule2Query,
     WindowsFirewallRule3Query,
 )
-
-
 _S_OK = 0
 _S_FALSE = 1
 _RPC_E_CHANGED_MODE = 0x80010106
@@ -50,12 +48,10 @@ _E_NOINTERFACE = 0x80004002
 _REGDB_E_CLASSNOTREG = 0x80040154
 _CLSCTX_INPROC_SERVER = 0x1
 _VT_EMPTY = 0
-_VT_I4 = 3
 _VT_BSTR = 8
 _VT_DISPATCH = 9
 _VT_BOOL = 11
 _VT_VARIANT = 12
-_VT_UNKNOWN = 13
 _VT_ARRAY = 0x2000
 _VARIANT_TRUE = -1
 
@@ -352,7 +348,8 @@ class _NativePolicy2(_NativeInterface):
 
 
 class _NativeRules(_NativeInterface):
-    def get_count(self): return self._runtime.scalar(self._pointer, 7)
+    def get_count(self):
+        return self._runtime.scalar(self._pointer, 7)
     def get_new_enum(self):
         output = ctypes.c_void_p()
         _check_hresult(self._runtime.call(self._pointer, 11, ctypes.c_int32,
@@ -371,10 +368,6 @@ class _NativeNewEnum(_NativeInterface):
 
 
 class _NativeEnumVariant(_NativeInterface):
-    def __init__(self, pointer, runtime):
-        super().__init__(pointer, runtime)
-        self._elements = {}
-
     def next_one(self):
         variant, fetched = _VARIANT(), ctypes.c_uint32()
         self._runtime.initialize_variant(variant)
@@ -392,9 +385,8 @@ class _NativeEnumVariant(_NativeInterface):
                 raise WindowsComContractError(
                     WindowsComFailureCategory.INVALID_RESULT)
             identity = int(variant.dispatch)
-            element = self._elements.setdefault(
-                identity,
-                _NativeRuleElement(ctypes.c_void_p(identity), self._runtime),
+            element = _NativeRuleElement(
+                ctypes.c_void_p(identity), self._runtime
             )
             owned = WindowsOwnedVariant(
                 WindowsVariantType.DISPATCH, element, lambda: None,
@@ -417,21 +409,32 @@ class _NativeRuleElement:
 
 
 class _NativeRule(_NativeInterface):
-    def get_enabled(self): return self._runtime.boolean(self._pointer, 33)
+    def get_enabled(self):
+        return self._runtime.boolean(self._pointer, 33)
     def get_direction(self): return self._runtime.scalar(self._pointer, 27)
     def get_action(self): return self._runtime.scalar(self._pointer, 41)
     def get_profiles(self): return self._runtime.scalar(self._pointer, 37)
     def get_protocol(self): return self._runtime.scalar(self._pointer, 15)
-    def get_local_ports(self): return self._runtime.bstr(self._pointer, 17)
-    def get_remote_ports(self): return self._runtime.bstr(self._pointer, 19)
-    def get_local_addresses(self): return self._runtime.bstr(self._pointer, 21)
-    def get_remote_addresses(self): return self._runtime.bstr(self._pointer, 23)
-    def get_application_name(self): return self._runtime.bstr(self._pointer, 11)
-    def get_service_name(self): return self._runtime.bstr(self._pointer, 13)
-    def get_interface_types(self): return self._runtime.bstr(self._pointer, 31)
-    def get_interfaces(self): return self._runtime.interface_variant(self._pointer, 29)
-    def get_icmp_types_and_codes(self): return self._runtime.bstr(self._pointer, 25)
-    def get_edge_traversal(self): return self._runtime.boolean(self._pointer, 39)
+    def get_local_ports(self):
+        return self._runtime.bstr(self._pointer, 17)
+    def get_remote_ports(self):
+        return self._runtime.bstr(self._pointer, 19)
+    def get_local_addresses(self):
+        return self._runtime.bstr(self._pointer, 21)
+    def get_remote_addresses(self):
+        return self._runtime.bstr(self._pointer, 23)
+    def get_application_name(self):
+        return self._runtime.bstr(self._pointer, 11)
+    def get_service_name(self):
+        return self._runtime.bstr(self._pointer, 13)
+    def get_interface_types(self):
+        return self._runtime.bstr(self._pointer, 31)
+    def get_interfaces(self):
+        return self._runtime.interface_variant(self._pointer, 29)
+    def get_icmp_types_and_codes(self):
+        return self._runtime.bstr(self._pointer, 25)
+    def get_edge_traversal(self):
+        return self._runtime.boolean(self._pointer, 39)
     def query_rule2(self):
         output = self._runtime.query(self._pointer, IID_INET_FW_RULE2)
         return WindowsFirewallRule2Query(
@@ -447,14 +450,19 @@ class _NativeRule(_NativeInterface):
 
 
 class _NativeRule2(_NativeInterface):
-    def get_edge_traversal_options(self): return self._runtime.scalar(self._pointer, 43)
+    def get_edge_traversal_options(self):
+        return self._runtime.scalar(self._pointer, 43)
 
 
 class _NativeRule3(_NativeInterface):
-    def get_local_app_package_id(self): return self._runtime.bstr(self._pointer, 45)
-    def get_local_user_authorized_list(self): return self._runtime.bstr(self._pointer, 47)
-    def get_remote_user_authorized_list(self): return self._runtime.bstr(self._pointer, 51)
-    def get_remote_machine_authorized_list(self): return self._runtime.bstr(self._pointer, 53)
+    def get_local_app_package_id(self):
+        return self._runtime.bstr(self._pointer, 45)
+    def get_local_user_authorized_list(self):
+        return self._runtime.bstr(self._pointer, 47)
+    def get_remote_user_authorized_list(self):
+        return self._runtime.bstr(self._pointer, 51)
+    def get_remote_machine_authorized_list(self):
+        return self._runtime.bstr(self._pointer, 53)
     def get_secure_flags(self): return self._runtime.scalar(self._pointer, 55)
 
 

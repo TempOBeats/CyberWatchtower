@@ -83,9 +83,30 @@ def _raw_port(value: str, field: str) -> None:
         raise ValueError(f"{field} contains an invalid port range.")
 
 
-def _raw_address(value: str, field: str) -> None:
+def _raw_address(
+    value: str,
+    field: str,
+) -> WindowsRawFirewallAddress:
     if value == "*" or value.casefold() == "localsubnet":
-        return
+        return value
+    if "-" in value:
+        parts = value.split("-")
+        if len(parts) != 2 or not all(parts):
+            raise ValueError(f"{field} contains an invalid address expression.")
+        try:
+            if all(":" in part for part in parts):
+                start_v6 = ipaddress.IPv6Address(parts[0])
+                end_v6 = ipaddress.IPv6Address(parts[1])
+                return RawWindowsFirewallIPv6AddressRange(start_v6, end_v6)
+            if all(":" not in part for part in parts):
+                start_v4 = ipaddress.IPv4Address(parts[0])
+                end_v4 = ipaddress.IPv4Address(parts[1])
+                return RawWindowsFirewallIPv4AddressRange(start_v4, end_v4)
+            raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{field} contains an invalid address expression."
+            ) from exc
     try:
         if "/" in value:
             ipaddress.ip_network(value, strict=False)
@@ -93,6 +114,46 @@ def _raw_address(value: str, field: str) -> None:
             ipaddress.ip_address(value)
     except ValueError as exc:
         raise ValueError(f"{field} contains an invalid address expression.") from exc
+    return value
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class RawWindowsFirewallIPv4AddressRange:
+    start: ipaddress.IPv4Address
+    end: ipaddress.IPv4Address
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.start, ipaddress.IPv4Address) \
+                or not isinstance(self.end, ipaddress.IPv4Address):
+            raise TypeError("raw Windows IPv4 range requires IPv4Address endpoints.")
+        if self.start > self.end:
+            raise ValueError("raw Windows IPv4 range endpoints are reversed.")
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class RawWindowsFirewallIPv6AddressRange:
+    start: ipaddress.IPv6Address
+    end: ipaddress.IPv6Address
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.start, ipaddress.IPv6Address) \
+                or not isinstance(self.end, ipaddress.IPv6Address):
+            raise TypeError("raw Windows IPv6 range requires IPv6Address endpoints.")
+        if self.start > self.end:
+            raise ValueError("raw Windows IPv6 range endpoints are reversed.")
+
+
+WindowsRawFirewallAddress = (
+    str | RawWindowsFirewallIPv4AddressRange
+    | RawWindowsFirewallIPv6AddressRange
+)
+
+
+def _raw_address_sort_key(value: WindowsRawFirewallAddress) -> tuple[int, str, str]:
+    if isinstance(value, str):
+        return (0, value, "")
+    family = 1 if isinstance(value, RawWindowsFirewallIPv4AddressRange) else 2
+    return (family, str(value.start), str(value.end))
 
 
 class RawWindowsApplicationPath:
@@ -170,8 +231,8 @@ class RawWindowsFirewallRule:
     protocol: int
     local_ports: tuple[str, ...] = ()
     remote_ports: tuple[str, ...] = ()
-    local_addresses: tuple[str, ...] = ()
-    remote_addresses: tuple[str, ...] = ()
+    local_addresses: tuple[WindowsRawFirewallAddress, ...] = ()
+    remote_addresses: tuple[WindowsRawFirewallAddress, ...] = ()
     application_path: RawWindowsApplicationPath | None = None
     service_name: str | None = None
     interface_types: tuple[WindowsRawFirewallInterfaceType, ...] = ()
@@ -197,9 +258,7 @@ class RawWindowsFirewallRule:
         if isinstance(self.protocol, bool) or not isinstance(self.protocol, int) \
                 or not 0 <= self.protocol <= MAX_WINDOWS_FIREWALL_PROTOCOL:
             raise ValueError("Windows firewall protocol is invalid.")
-        for name in (
-            "local_ports", "remote_ports", "local_addresses", "remote_addresses"
-        ):
+        for name in ("local_ports", "remote_ports"):
             values = getattr(self, name)
             if not isinstance(values, tuple) or not all(
                 isinstance(value, str) for value in values
@@ -209,15 +268,38 @@ class RawWindowsFirewallRule:
                 raise ValueError(f"{name} exceeds the supported value bound.")
             for value in values:
                 _raw_token(value, f"Windows firewall {name}")
-                if "ports" in name:
-                    _raw_port(value, f"Windows firewall {name}")
-                else:
-                    _raw_address(value, f"Windows firewall {name}")
+                _raw_port(value, f"Windows firewall {name}")
             if len(set(values)) != len(values):
                 raise ValueError(f"{name} cannot contain duplicates.")
             if "*" in values and len(values) != 1:
                 raise ValueError(f"{name} cannot combine ANY with explicit values.")
             object.__setattr__(self, name, tuple(sorted(values)))
+        for name in ("local_addresses", "remote_addresses"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or not all(
+                isinstance(value, (
+                    str, RawWindowsFirewallIPv4AddressRange,
+                    RawWindowsFirewallIPv6AddressRange,
+                ))
+                for value in values
+            ):
+                raise TypeError(f"{name} must use the closed raw address union.")
+            if len(values) > MAX_VALUES_PER_CONDITION:
+                raise ValueError(f"{name} exceeds the supported value bound.")
+            normalized_values: list[WindowsRawFirewallAddress] = []
+            for value in values:
+                if isinstance(value, str):
+                    _raw_token(value, f"Windows firewall {name}")
+                    value = _raw_address(value, f"Windows firewall {name}")
+                normalized_values.append(value)
+            values = tuple(normalized_values)
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} cannot contain duplicates.")
+            if any(value == "*" for value in values) and len(values) != 1:
+                raise ValueError(f"{name} cannot combine ANY with explicit values.")
+            object.__setattr__(self, name, tuple(sorted(
+                values, key=_raw_address_sort_key
+            )))
         if self.application_path is not None and not isinstance(
             self.application_path, RawWindowsApplicationPath
         ):
@@ -228,10 +310,10 @@ class RawWindowsFirewallRule:
                    for character in self.service_name):
                 raise ValueError("Windows service name is not canonical.")
         self._closed_tuple(
-            "interface types", self.interface_types, WindowsRawFirewallInterfaceType
+            "interface types", self.interface_types, WindowsRawFirewallInterfaceType,
         )
         self._closed_tuple(
-            "interfaces", self.interfaces, RawWindowsInterfaceIdentity
+            "interfaces", self.interfaces, RawWindowsInterfaceIdentity,
         )
         self._closed_tuple(
             "unsupported features", self.unsupported_features,
@@ -256,7 +338,9 @@ class RawWindowsFirewallRule:
         )))
 
     @staticmethod
-    def _closed_tuple(name: str, values: tuple, expected: type) -> None:
+    def _closed_tuple(
+        name: str, values: tuple, expected: type
+    ) -> None:
         if not isinstance(values, tuple) or not all(
             isinstance(value, expected) for value in values
         ):
@@ -319,7 +403,8 @@ def _raw_rule_sort_key(rule: RawWindowsFirewallRule) -> tuple:
         rule.policy_view.value, rule.enabled, rule.direction.value,
         rule.action.value, rule.profile_mask, rule.protocol,
         tuple(sorted(rule.local_ports)), tuple(sorted(rule.remote_ports)),
-        tuple(sorted(rule.local_addresses)), tuple(sorted(rule.remote_addresses)),
+        tuple(_raw_address_sort_key(value) for value in rule.local_addresses),
+        tuple(_raw_address_sort_key(value) for value in rule.remote_addresses),
         path_digest, rule.service_name or "",
         tuple(sorted(value.value for value in rule.interface_types)),
         interface_digests, -1 if rule.edge_traversal is None else rule.edge_traversal,

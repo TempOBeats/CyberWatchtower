@@ -13,6 +13,8 @@ from cyberwatchtower.firewall_policy import (
     ApplicationConditionKind,
     FirewallAddressCondition,
     FirewallApplicationCondition,
+    FirewallIPv4AddressRange,
+    FirewallIPv6AddressRange,
     FirewallInterfaceCondition,
     FirewallPlatformTechnology,
     FirewallPortRange,
@@ -37,7 +39,10 @@ from .firewall_rule_models import (
     WINDOWS_FIREWALL_PROTOCOL_ANY,
     RawWindowsApplicationPath,
     RawWindowsFirewallRule,
+    RawWindowsFirewallIPv4AddressRange,
+    RawWindowsFirewallIPv6AddressRange,
     RawWindowsInterfaceIdentity,
+    WindowsRawFirewallAddress,
     WindowsFirewallPolicyView,
     WindowsFirewallRuleCollectionResult,
     WindowsFirewallRuleResultCode,
@@ -47,8 +52,6 @@ from .firewall_rule_models import (
     WindowsRawFirewallUnsupportedFeature,
 )
 from .firewall_com_contracts import MAX_PROPERTY_GETTERS_PER_RULE
-
-
 WINDOWS_FIREWALL_MAX_GETTER_OPERATIONS_PER_RULE = MAX_PROPERTY_GETTERS_PER_RULE
 
 
@@ -70,6 +73,28 @@ class WindowsComOwnershipRequirement(str, Enum):
 
 class WindowsComGetterDeadlineGuarantee(str, Enum):
     NON_PREEMPTIBLE_IN_PROCESS = "NON_PREEMPTIBLE_IN_PROCESS"
+
+
+class _WindowsApplicationIdentityKind(str, Enum):
+    EXACT = "EXACT"
+    UNREPRESENTABLE = "UNREPRESENTABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class _WindowsApplicationIdentityResult:
+    kind: _WindowsApplicationIdentityKind
+    identity: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, _WindowsApplicationIdentityKind):
+            raise TypeError("application identity result requires the closed kind.")
+        if self.kind == _WindowsApplicationIdentityKind.EXACT:
+            if not isinstance(self.identity, str) or len(self.identity) != 64 \
+                    or any(character not in "0123456789abcdef"
+                           for character in self.identity):
+                raise ValueError("exact application identity requires a digest.")
+        elif self.identity is not None:
+            raise ValueError("unrepresentable application identity carries no value.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,19 +169,34 @@ class WindowsFirewallRuleNormalizationResult:
             raise ValueError("incomplete normalized rules require typed failure.")
 
 
-def windows_application_identity(path: RawWindowsApplicationPath) -> str:
-    """Reduce a private full path to a domain-separated opaque identity."""
-
+def _windows_application_identity_result(
+    path: RawWindowsApplicationPath,
+) -> _WindowsApplicationIdentityResult:
     if not isinstance(path, RawWindowsApplicationPath):
         raise TypeError("application identity requires the private raw path type.")
     raw = path.consume_for_normalization().replace("/", "\\")
     normalized = ntpath.normcase(ntpath.normpath(raw))
     if not ntpath.isabs(normalized) or normalized in {".", "\\"}:
-        raise ValueError("Windows application path must be absolute.")
-    return hashlib.sha256(
+        return _WindowsApplicationIdentityResult(
+            _WindowsApplicationIdentityKind.UNREPRESENTABLE
+        )
+    identity = hashlib.sha256(
         b"cyberwatchtower:windows-firewall-application:v1\0"
         + normalized.encode("utf-8")
     ).hexdigest()
+    return _WindowsApplicationIdentityResult(
+        _WindowsApplicationIdentityKind.EXACT, identity
+    )
+
+
+def windows_application_identity(path: RawWindowsApplicationPath) -> str:
+    """Reduce a private full path to a domain-separated opaque identity."""
+
+    result = _windows_application_identity_result(path)
+    if result.kind == _WindowsApplicationIdentityKind.UNREPRESENTABLE:
+        raise ValueError("Windows application path must be absolute.")
+    assert result.identity is not None
+    return result.identity
 
 
 def _interface_identity(value: RawWindowsInterfaceIdentity) -> str:
@@ -212,14 +252,26 @@ def _ports(values: tuple[str, ...]) -> tuple[FirewallPortRange, ...]:
     return tuple(sorted(set(parsed), key=repr))
 
 
-def _addresses(values: tuple[str, ...]) -> tuple[FirewallAddressCondition, ...]:
+def _addresses(
+    values: tuple[WindowsRawFirewallAddress, ...],
+) -> tuple[FirewallAddressCondition, ...]:
     if not values or values == ("*",):
         return ()
-    if "*" in values:
+    if any(value == "*" for value in values):
         raise ValueError("ANY address cannot be combined with explicit addresses.")
     parsed = []
     for value in values:
-        if value.casefold() == "localsubnet":
+        if isinstance(value, RawWindowsFirewallIPv4AddressRange):
+            condition = FirewallAddressCondition(
+                AddressConditionKind.IPV4_RANGE,
+                FirewallIPv4AddressRange(value.start, value.end),
+            )
+        elif isinstance(value, RawWindowsFirewallIPv6AddressRange):
+            condition = FirewallAddressCondition(
+                AddressConditionKind.IPV6_RANGE,
+                FirewallIPv6AddressRange(value.start, value.end),
+            )
+        elif value.casefold() == "localsubnet":
             condition = FirewallAddressCondition(
                 AddressConditionKind.SUPPORTED_SPECIAL_SCOPE, "LOCAL_SUBNET"
             )
@@ -253,9 +305,16 @@ def _application(
             _service_identity(raw.service_name),
         )
     if raw.application_path is not None:
+        result = _windows_application_identity_result(raw.application_path)
+        if result.kind == _WindowsApplicationIdentityKind.UNREPRESENTABLE:
+            unsupported.add(
+                FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE
+            )
+            return FirewallApplicationCondition(ApplicationConditionKind.ANY)
+        assert result.identity is not None
         return FirewallApplicationCondition(
             ApplicationConditionKind.APPLICATION_DIGEST,
-            windows_application_identity(raw.application_path),
+            result.identity,
         )
     return FirewallApplicationCondition(ApplicationConditionKind.ANY)
 
@@ -301,6 +360,13 @@ def _normalize_rule(raw: RawWindowsFirewallRule) -> FirewallRuleObservation:
     remote_addresses = _addresses(raw.remote_addresses)
     if remote_addresses:
         unsupported.add(FirewallRuleUnsupportedFeature.REMOTE_ADDRESS_RESTRICTED)
+    if any(isinstance(value, (
+        RawWindowsFirewallIPv4AddressRange,
+        RawWindowsFirewallIPv6AddressRange,
+    )) for value in (
+        *raw.local_addresses, *raw.remote_addresses,
+    )):
+        unsupported.add(FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE)
     for feature in raw.unsupported_features:
         if feature in {
             WindowsRawFirewallUnsupportedFeature.LOCAL_USER_SCOPE,
@@ -311,35 +377,41 @@ def _normalize_rule(raw: RawWindowsFirewallRule) -> FirewallRuleObservation:
             unsupported.add(FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE)
     application = _application(raw, unsupported)
     interface = _interface(raw, unsupported)
+    enabled = (
+        FirewallRuleEnabledState.ENABLED
+        if raw.enabled else FirewallRuleEnabledState.DISABLED
+    )
+    direction = (
+        FirewallRuleDirection.INBOUND
+        if raw.direction == WindowsRawFirewallRuleDirection.INBOUND
+        else FirewallRuleDirection.OUTBOUND
+    )
+    action = (
+        FirewallRuleAction.ALLOW
+        if raw.action == WindowsRawFirewallRuleAction.ALLOW
+        else FirewallRuleAction.BLOCK
+    )
+    profiles = _profiles(raw.profile_mask)
+    local_ports = _ports(raw.local_ports)
+    local_addresses = _addresses(raw.local_addresses)
+    edge_traversal = raw.edge_traversal
     values = {
         "technology": FirewallPlatformTechnology.WINDOWS_FIREWALL,
-        "enabled": (
-            FirewallRuleEnabledState.ENABLED
-            if raw.enabled else FirewallRuleEnabledState.DISABLED
-        ),
-        "direction": (
-            FirewallRuleDirection.INBOUND
-            if raw.direction == WindowsRawFirewallRuleDirection.INBOUND
-            else FirewallRuleDirection.OUTBOUND
-        ),
-        "action": (
-            FirewallRuleAction.ALLOW
-            if raw.action == WindowsRawFirewallRuleAction.ALLOW
-            else FirewallRuleAction.BLOCK
-        ),
-        "profiles": _profiles(raw.profile_mask),
+        "enabled": enabled,
+        "direction": direction,
+        "action": action,
+        "profiles": profiles,
         "protocol": protocol,
-        "local_ports": _ports(raw.local_ports),
-        "local_addresses": _addresses(raw.local_addresses),
+        "local_ports": local_ports,
+        "local_addresses": local_addresses,
         "remote_addresses": remote_addresses,
         "application": application,
         "interface": interface,
-        "edge_traversal": raw.edge_traversal,
+        "edge_traversal": edge_traversal,
         "unsupported_features": tuple(sorted(unsupported, key=lambda item: item.value)),
     }
-    return FirewallRuleObservation(
-        semantic_firewall_rule_id(**values), **values
-    )
+    semantic_rule_id = semantic_firewall_rule_id(**values)
+    return FirewallRuleObservation(semantic_rule_id, **values)
 
 
 def normalize_windows_firewall_rules(
@@ -365,9 +437,10 @@ def normalize_windows_firewall_rules(
             result.policy_view, coverage, failure=result.state
         )
     try:
-        rules = normalize_firewall_rules(tuple(
+        normalized_rules = tuple(
             _normalize_rule(rule) for rule in result.rules
-        ))
+        )
+        rules = normalize_firewall_rules(normalized_rules)
     except (KeyError, TypeError, ValueError):
         return WindowsFirewallRuleNormalizationResult(
             result.policy_view,

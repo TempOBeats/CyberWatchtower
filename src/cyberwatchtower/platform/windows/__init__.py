@@ -26,6 +26,8 @@ from .firewall import (
 )
 from .firewall_rule_models import (
     RawWindowsApplicationPath,
+    RawWindowsFirewallIPv4AddressRange,
+    RawWindowsFirewallIPv6AddressRange,
     RawWindowsFirewallRule,
     RawWindowsInterfaceIdentity,
     WindowsFirewallPolicyView,
@@ -144,6 +146,8 @@ __all__ = [
     "RawUdpEndpoint",
     "RawWindowsSystemInfo",
     "RawWindowsApplicationPath",
+    "RawWindowsFirewallIPv4AddressRange",
+    "RawWindowsFirewallIPv6AddressRange",
     "RawWindowsFirewallRule",
     "RawWindowsInterfaceIdentity",
     "APPROVED_FIREWALL_PROPERTY_GETTERS",

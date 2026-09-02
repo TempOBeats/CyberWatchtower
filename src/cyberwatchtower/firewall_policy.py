@@ -71,6 +71,8 @@ class AddressConditionKind(str, Enum):
     EXACT = "EXACT"
     CIDR = "CIDR"
     SUPPORTED_SPECIAL_SCOPE = "SUPPORTED_SPECIAL_SCOPE"
+    IPV4_RANGE = "IPV4_RANGE"
+    IPV6_RANGE = "IPV6_RANGE"
 
 
 class ApplicationConditionKind(str, Enum):
@@ -152,9 +154,35 @@ class FirewallPortRange:
 
 
 @dataclass(frozen=True, slots=True, order=True)
+class FirewallIPv4AddressRange:
+    start: ipaddress.IPv4Address
+    end: ipaddress.IPv4Address
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.start, ipaddress.IPv4Address) \
+                or not isinstance(self.end, ipaddress.IPv4Address):
+            raise TypeError("firewall IPv4 range requires IPv4Address endpoints.")
+        if self.start > self.end:
+            raise ValueError("firewall IPv4 range endpoints are reversed.")
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class FirewallIPv6AddressRange:
+    start: ipaddress.IPv6Address
+    end: ipaddress.IPv6Address
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.start, ipaddress.IPv6Address) \
+                or not isinstance(self.end, ipaddress.IPv6Address):
+            raise TypeError("firewall IPv6 range requires IPv6Address endpoints.")
+        if self.start > self.end:
+            raise ValueError("firewall IPv6 range endpoints are reversed.")
+
+
+@dataclass(frozen=True, slots=True, order=True)
 class FirewallAddressCondition:
     kind: AddressConditionKind
-    value: str | None = None
+    value: str | FirewallIPv4AddressRange | FirewallIPv6AddressRange | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, AddressConditionKind):
@@ -163,6 +191,18 @@ class FirewallAddressCondition:
             if self.value is not None:
                 raise ValueError("ANY address condition cannot carry a value.")
             return
+        if self.kind == AddressConditionKind.IPV4_RANGE:
+            if not isinstance(self.value, FirewallIPv4AddressRange):
+                raise TypeError("IPv4 range condition requires the closed range type.")
+            return
+        if self.kind == AddressConditionKind.IPV6_RANGE:
+            if not isinstance(self.value, FirewallIPv6AddressRange):
+                raise TypeError("IPv6 range condition requires the closed range type.")
+            return
+        if isinstance(self.value, (
+            FirewallIPv4AddressRange, FirewallIPv6AddressRange,
+        )):
+            raise TypeError("non-range address condition cannot carry a range.")
         value = _token(self.value, "address condition")
         if self.kind == AddressConditionKind.EXACT:
             object.__setattr__(self, "value", str(ipaddress.ip_address(value)))
@@ -450,8 +490,8 @@ def semantic_firewall_rule_id(
         "profiles": [value.value for value in profiles],
         "protocol": protocol.value if protocol is not None else None,
         "local_ports": [[value.start, value.end] for value in local_ports],
-        "local_addresses": [[value.kind.value, value.value] for value in local_addresses],
-        "remote_addresses": [[value.kind.value, value.value] for value in remote_addresses],
+        "local_addresses": [_address_identity(value) for value in local_addresses],
+        "remote_addresses": [_address_identity(value) for value in remote_addresses],
         "application": [application.kind.value, application.value],
         "interface": [interface.kind.value, interface.value],
         "edge_traversal": edge_traversal,
@@ -461,16 +501,40 @@ def semantic_firewall_rule_id(
     return hashlib.sha256(b"cyberwatchtower:firewall-rule:v1\0" + encoded).hexdigest()
 
 
-def _address_matches(condition: FirewallAddressCondition, address: str) -> bool:
+def _address_identity(condition: FirewallAddressCondition) -> list[object]:
+    if condition.kind in {
+        AddressConditionKind.IPV4_RANGE, AddressConditionKind.IPV6_RANGE,
+    }:
+        assert isinstance(condition.value, (
+            FirewallIPv4AddressRange, FirewallIPv6AddressRange,
+        ))
+        return [condition.kind.value, str(condition.value.start),
+                str(condition.value.end)]
+    return [condition.kind.value, condition.value]
+
+
+def _address_matches(
+    condition: FirewallAddressCondition, address: str
+) -> FirewallConditionMatch:
     parsed = ipaddress.ip_address(address.split("%", 1)[0])
     if condition.kind == AddressConditionKind.ANY:
-        return True
+        return FirewallConditionMatch.MATCH
     if condition.kind == AddressConditionKind.EXACT:
-        return parsed == ipaddress.ip_address(condition.value)
+        matched = parsed == ipaddress.ip_address(condition.value)
+        return (FirewallConditionMatch.MATCH if matched
+                else FirewallConditionMatch.NO_MATCH)
     if condition.kind == AddressConditionKind.CIDR:
-        return parsed in ipaddress.ip_network(condition.value, strict=False)
+        matched = parsed in ipaddress.ip_network(condition.value, strict=False)
+        return (FirewallConditionMatch.MATCH if matched
+                else FirewallConditionMatch.NO_MATCH)
+    if condition.kind in {
+        AddressConditionKind.IPV4_RANGE, AddressConditionKind.IPV6_RANGE,
+    }:
+        return FirewallConditionMatch.INDETERMINATE
     scope = FirewallSpecialAddressScope(condition.value)
-    return parsed.is_loopback if scope == FirewallSpecialAddressScope.LOOPBACK else False
+    matched = parsed.is_loopback if scope == FirewallSpecialAddressScope.LOOPBACK else False
+    return (FirewallConditionMatch.MATCH if matched
+            else FirewallConditionMatch.NO_MATCH)
 
 
 def _rule_match(
@@ -492,10 +556,16 @@ def _rule_match(
         value.start <= subject.local_port <= value.end for value in rule.local_ports
     ):
         return None
-    if rule.local_addresses and not any(
-        _address_matches(value, subject.local_address) for value in rule.local_addresses
-    ):
-        return None
+    if rule.local_addresses:
+        address_matches = tuple(
+            _address_matches(value, subject.local_address)
+            for value in rule.local_addresses
+        )
+        if FirewallConditionMatch.MATCH not in address_matches:
+            if FirewallConditionMatch.INDETERMINATE in address_matches:
+                indeterminate = True
+            else:
+                return None
     application = rule.application
     if application.kind == ApplicationConditionKind.APPLICATION_DIGEST:
         if subject.application_digest is None:

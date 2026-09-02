@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
+import ipaddress
 import json
 from typing import Protocol, runtime_checkable
 
@@ -27,7 +28,10 @@ from .firewall_rule_models import (
     MAX_RAW_WINDOWS_APPLICATION_PATH,
     RawWindowsApplicationPath,
     RawWindowsFirewallRule,
+    RawWindowsFirewallIPv4AddressRange,
+    RawWindowsFirewallIPv6AddressRange,
     RawWindowsInterfaceIdentity,
+    WindowsRawFirewallAddress,
     WindowsFirewallPolicyView,
     WindowsFirewallRuleCollectionResult,
     WindowsFirewallRuleResultCode,
@@ -40,6 +44,7 @@ from .firewall_rules import normalize_windows_firewall_rules
 
 
 WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION = "1"
+WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2 = "2"
 WINDOWS_FIREWALL_HELPER_TIMEOUT_MS = 15_000
 WINDOWS_FIREWALL_HELPER_TERMINATION_GRACE_MS = 1_000
 MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES = 256
@@ -54,6 +59,103 @@ class WindowsFirewallIpcOperation(str, Enum):
 class WindowsFirewallIpcPayloadKind(str, Enum):
     REQUEST = "REQUEST"
     RESPONSE = "RESPONSE"
+
+
+class WindowsFirewallIpcV2AddressKind(str, Enum):
+    ANY = "ANY"
+    LOCAL_SUBNET = "LOCAL_SUBNET"
+    IPV4 = "IPV4"
+    IPV6 = "IPV6"
+    IPV4_CIDR = "IPV4_CIDR"
+    IPV6_CIDR = "IPV6_CIDR"
+    IPV4_RANGE = "IPV4_RANGE"
+    IPV6_RANGE = "IPV6_RANGE"
+
+
+_V2_ADDRESS_KIND_ORDER = {
+    kind: index for index, kind in enumerate(WindowsFirewallIpcV2AddressKind)
+}
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class WindowsFirewallIpcV2Address:
+    """Closed v2-wire address; address values are redacted from repr/str."""
+
+    kind: WindowsFirewallIpcV2AddressKind
+    value: str | None = None
+    start: str | None = None
+    end: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, WindowsFirewallIpcV2AddressKind):
+            raise TypeError("v2 address kind must use the closed enum.")
+        if self.kind in {
+            WindowsFirewallIpcV2AddressKind.ANY,
+            WindowsFirewallIpcV2AddressKind.LOCAL_SUBNET,
+        }:
+            if any(item is not None for item in (self.value, self.start, self.end)):
+                raise ValueError("v2 symbolic address cannot carry a value.")
+            return
+        if self.kind in {
+            WindowsFirewallIpcV2AddressKind.IPV4_RANGE,
+            WindowsFirewallIpcV2AddressKind.IPV6_RANGE,
+        }:
+            if self.value is not None or not isinstance(self.start, str) \
+                    or not isinstance(self.end, str):
+                raise ValueError("v2 address range requires closed endpoints.")
+            try:
+                address_type = (
+                    ipaddress.IPv4Address
+                    if self.kind == WindowsFirewallIpcV2AddressKind.IPV4_RANGE
+                    else ipaddress.IPv6Address
+                )
+                first = address_type(self.start)
+                last = address_type(self.end)
+            except ValueError:
+                raise ValueError("v2 address range endpoints are invalid.") from None
+            if first > last:
+                raise ValueError("v2 address range endpoints are invalid.")
+            object.__setattr__(self, "start", str(first))
+            object.__setattr__(self, "end", str(last))
+            return
+        if not isinstance(self.value, str) or self.start is not None \
+                or self.end is not None:
+            raise ValueError("v2 address requires one closed value.")
+        try:
+            parsed = (
+                ipaddress.ip_network(self.value, strict=False)
+                if self.kind in {
+                    WindowsFirewallIpcV2AddressKind.IPV4_CIDR,
+                    WindowsFirewallIpcV2AddressKind.IPV6_CIDR,
+                }
+                else ipaddress.ip_address(self.value)
+            )
+        except ValueError:
+            raise ValueError("v2 address value is invalid.") from None
+        expected = {
+            WindowsFirewallIpcV2AddressKind.IPV4: ipaddress.IPv4Address,
+            WindowsFirewallIpcV2AddressKind.IPV6: ipaddress.IPv6Address,
+            WindowsFirewallIpcV2AddressKind.IPV4_CIDR: ipaddress.IPv4Network,
+            WindowsFirewallIpcV2AddressKind.IPV6_CIDR: ipaddress.IPv6Network,
+        }[self.kind]
+        if not isinstance(parsed, expected):
+            raise ValueError("v2 address family does not match its kind.")
+        object.__setattr__(self, "value", str(parsed))
+
+    def __repr__(self) -> str:
+        return f"WindowsFirewallIpcV2Address({self.kind.value}, <redacted>)"
+
+    __str__ = __repr__
+
+
+def _v2_address_sort_key(
+    address: WindowsFirewallIpcV2Address,
+) -> tuple[int, str, str]:
+    return (
+        _V2_ADDRESS_KIND_ORDER[address.kind],
+        address.value or address.start or "",
+        address.end or "",
+    )
 
 
 class WindowsFirewallHelperWaitState(str, Enum):
@@ -160,6 +262,105 @@ class WindowsFirewallHelperResponse:
         if normalize_windows_firewall_rules(self.result).failure is not None \
                 and self.result.state == WindowsFirewallRuleResultCode.COMPLETE:
             raise ValueError("helper response contains invalid normalized rules.")
+
+
+@dataclass(frozen=True, slots=True)
+class WindowsFirewallIpcV2Request:
+    protocol_version: str = WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2
+    operation: WindowsFirewallIpcOperation = (
+        WindowsFirewallIpcOperation.COLLECT_CURRENT_POLICY
+    )
+
+    def __post_init__(self) -> None:
+        if self.protocol_version != WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2:
+            raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
+        if not isinstance(self.operation, WindowsFirewallIpcOperation):
+            raise TypeError("v2 helper operation must use the closed enum.")
+
+
+@dataclass(frozen=True, slots=True)
+class WindowsFirewallIpcV2Rule:
+    enabled: bool
+    direction: WindowsRawFirewallRuleDirection
+    action: WindowsRawFirewallRuleAction
+    profile_mask: int
+    protocol: int
+    local_ports: tuple[str, ...] = ()
+    remote_ports: tuple[str, ...] = ()
+    local_addresses: tuple[WindowsFirewallIpcV2Address, ...] = ()
+    remote_addresses: tuple[WindowsFirewallIpcV2Address, ...] = ()
+    application_path: RawWindowsApplicationPath | None = None
+    service_name: str | None = None
+    interface_types: tuple[WindowsRawFirewallInterfaceType, ...] = ()
+    interfaces: tuple[RawWindowsInterfaceIdentity, ...] = ()
+    edge_traversal: bool | None = None
+    unsupported_features: tuple[WindowsRawFirewallUnsupportedFeature, ...] = ()
+
+    def __post_init__(self) -> None:
+        validated = RawWindowsFirewallRule(
+            WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+            self.enabled,
+            self.direction,
+            self.action,
+            self.profile_mask,
+            self.protocol,
+            self.local_ports,
+            self.remote_ports,
+            (),
+            (),
+            self.application_path,
+            self.service_name,
+            self.interface_types,
+            self.interfaces,
+            self.edge_traversal,
+            self.unsupported_features,
+        )
+        for name in (
+            "local_ports", "remote_ports", "application_path", "service_name",
+            "interface_types", "interfaces", "edge_traversal",
+            "unsupported_features",
+        ):
+            object.__setattr__(self, name, getattr(validated, name))
+        for name in ("local_addresses", "remote_addresses"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or not all(
+                isinstance(value, WindowsFirewallIpcV2Address) for value in values
+            ):
+                raise TypeError("v2 addresses must use an immutable closed tuple.")
+            if len(values) > MAX_VALUES_PER_CONDITION:
+                raise ValueError("v2 address condition exceeds the value bound.")
+            if len(set(values)) != len(values):
+                raise ValueError("v2 address condition cannot contain duplicates.")
+            if any(value.kind == WindowsFirewallIpcV2AddressKind.ANY for value in values) \
+                    and len(values) != 1:
+                raise ValueError("v2 ANY cannot be combined with explicit addresses.")
+            object.__setattr__(self, name, tuple(sorted(
+                values, key=_v2_address_sort_key
+            )))
+
+
+@dataclass(frozen=True, slots=True)
+class WindowsFirewallIpcV2Response:
+    protocol_version: str
+    authority: WindowsFirewallPolicyView
+    result: WindowsFirewallRuleResultCode
+    rules: tuple[WindowsFirewallIpcV2Rule, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.protocol_version != WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2:
+            raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
+        if self.authority != WindowsFirewallPolicyView.CURRENT_POLICY_VIEW:
+            raise ValueError("v2 helper authority must remain current-policy view.")
+        if not isinstance(self.result, WindowsFirewallRuleResultCode):
+            raise TypeError("v2 result must use the closed result enum.")
+        if not isinstance(self.rules, tuple) or not all(
+            isinstance(rule, WindowsFirewallIpcV2Rule) for rule in self.rules
+        ):
+            raise TypeError("v2 response rules must use an immutable closed tuple.")
+        if len(self.rules) > MAX_FIREWALL_RULES:
+            raise ValueError("v2 response exceeds the rule bound.")
+        if self.result != WindowsFirewallRuleResultCode.COMPLETE and self.rules:
+            raise ValueError("failed v2 response cannot retain raw rules.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,6 +540,248 @@ def decode_windows_firewall_helper_response(
         ) from None
 
 
+def encode_windows_firewall_ipc_v2_request(
+    request: WindowsFirewallIpcV2Request,
+) -> WindowsFirewallIpcPayload:
+    if not isinstance(request, WindowsFirewallIpcV2Request):
+        raise TypeError("v2 request encoder requires the closed v2 contract.")
+    return _payload_v2(
+        WindowsFirewallIpcPayloadKind.REQUEST,
+        {
+            "operation": request.operation.value,
+            "protocol_version": request.protocol_version,
+        },
+    )
+
+
+def decode_windows_firewall_ipc_v2_request(
+    payload: WindowsFirewallIpcPayload,
+) -> WindowsFirewallIpcV2Request:
+    value = _decode_payload(payload, WindowsFirewallIpcPayloadKind.REQUEST)
+    _exact_fields(value, {"operation", "protocol_version"})
+    _require_protocol_version(value["protocol_version"],
+                              WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2)
+    try:
+        return WindowsFirewallIpcV2Request(
+            value["protocol_version"], WindowsFirewallIpcOperation(value["operation"])
+        )
+    except WindowsComContractError:
+        raise
+    except (TypeError, ValueError):
+        raise WindowsComContractError(
+            WindowsComFailureCategory.INVALID_RESULT
+        ) from None
+
+
+def encode_windows_firewall_ipc_v2_response(
+    response: WindowsFirewallIpcV2Response,
+) -> WindowsFirewallIpcPayload:
+    if not isinstance(response, WindowsFirewallIpcV2Response):
+        raise TypeError("v2 response encoder requires the closed v2 contract.")
+    return _payload_v2(
+        WindowsFirewallIpcPayloadKind.RESPONSE,
+        {
+            "authority": response.authority.value,
+            "protocol_version": response.protocol_version,
+            "result": response.result.value,
+            "rules": [_encode_v2_rule(rule) for rule in response.rules],
+        },
+    )
+
+
+def decode_windows_firewall_ipc_v2_response(
+    payload: WindowsFirewallIpcPayload,
+) -> WindowsFirewallIpcV2Response:
+    value = _decode_payload(payload, WindowsFirewallIpcPayloadKind.RESPONSE)
+    _exact_fields(value, {"authority", "protocol_version", "result", "rules"})
+    _require_protocol_version(value["protocol_version"],
+                              WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2)
+    try:
+        authority = WindowsFirewallPolicyView(value["authority"])
+        result = WindowsFirewallRuleResultCode(value["result"])
+        encoded_rules = value["rules"]
+        if not isinstance(encoded_rules, list) or len(encoded_rules) > MAX_FIREWALL_RULES:
+            raise ValueError
+        rules = tuple(_decode_v2_rule(item) for item in encoded_rules)
+        return WindowsFirewallIpcV2Response(
+            value["protocol_version"], authority, result, rules
+        )
+    except WindowsComContractError:
+        raise
+    except (KeyError, TypeError, ValueError):
+        raise WindowsComContractError(
+            WindowsComFailureCategory.INVALID_RESULT
+        ) from None
+
+
+def _require_protocol_version(value: object, expected: str) -> None:
+    if not isinstance(value, str):
+        raise WindowsComContractError(WindowsComFailureCategory.INVALID_RESULT)
+    if value != expected:
+        raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
+
+
+def decode_windows_firewall_ipc_request_for_version(
+    payload: WindowsFirewallIpcPayload,
+    expected_version: str,
+) -> WindowsFirewallHelperRequest | WindowsFirewallIpcV2Request:
+    """Strict portable dispatch; production continues calling the v1 decoder."""
+
+    _require_supported_protocol_version(expected_version)
+    if expected_version == WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION:
+        return decode_windows_firewall_helper_request(payload)
+    return decode_windows_firewall_ipc_v2_request(payload)
+
+
+def decode_windows_firewall_ipc_response_for_version(
+    payload: WindowsFirewallIpcPayload,
+    expected_version: str,
+) -> WindowsFirewallHelperResponse | WindowsFirewallIpcV2Response:
+    """Decode only the version requested; never sniff, retry, or downgrade."""
+
+    _require_supported_protocol_version(expected_version)
+    if expected_version == WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION:
+        return decode_windows_firewall_helper_response(payload)
+    return decode_windows_firewall_ipc_v2_response(payload)
+
+
+def _require_supported_protocol_version(value: object) -> None:
+    if not isinstance(value, str):
+        raise WindowsComContractError(WindowsComFailureCategory.INVALID_RESULT)
+    if value not in {
+        WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION,
+        WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2,
+    }:
+        raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
+
+
+def windows_firewall_ipc_v2_address_to_raw(
+    address: WindowsFirewallIpcV2Address,
+) -> WindowsRawFirewallAddress:
+    if not isinstance(address, WindowsFirewallIpcV2Address):
+        raise TypeError("v2-to-raw conversion requires a validated v2 address.")
+    if address.kind == WindowsFirewallIpcV2AddressKind.ANY:
+        return "*"
+    if address.kind == WindowsFirewallIpcV2AddressKind.LOCAL_SUBNET:
+        return "LocalSubnet"
+    if address.kind == WindowsFirewallIpcV2AddressKind.IPV4_RANGE:
+        assert address.start is not None and address.end is not None
+        return RawWindowsFirewallIPv4AddressRange(
+            ipaddress.IPv4Address(address.start), ipaddress.IPv4Address(address.end)
+        )
+    if address.kind == WindowsFirewallIpcV2AddressKind.IPV6_RANGE:
+        assert address.start is not None and address.end is not None
+        return RawWindowsFirewallIPv6AddressRange(
+            ipaddress.IPv6Address(address.start), ipaddress.IPv6Address(address.end)
+        )
+    assert address.value is not None
+    return address.value
+
+
+def windows_firewall_raw_address_to_ipc_v2(
+    address: WindowsRawFirewallAddress,
+) -> WindowsFirewallIpcV2Address:
+    if isinstance(address, RawWindowsFirewallIPv4AddressRange):
+        return WindowsFirewallIpcV2Address(
+            WindowsFirewallIpcV2AddressKind.IPV4_RANGE,
+            start=str(address.start), end=str(address.end),
+        )
+    if isinstance(address, RawWindowsFirewallIPv6AddressRange):
+        return WindowsFirewallIpcV2Address(
+            WindowsFirewallIpcV2AddressKind.IPV6_RANGE,
+            start=str(address.start), end=str(address.end),
+        )
+    if not isinstance(address, str):
+        raise TypeError("raw-to-v2 conversion requires the closed raw address union.")
+    if address == "*":
+        return WindowsFirewallIpcV2Address(WindowsFirewallIpcV2AddressKind.ANY)
+    if address.casefold() == "localsubnet":
+        return WindowsFirewallIpcV2Address(
+            WindowsFirewallIpcV2AddressKind.LOCAL_SUBNET
+        )
+    try:
+        if "/" in address:
+            parsed = ipaddress.ip_network(address, strict=False)
+            kind = (
+                WindowsFirewallIpcV2AddressKind.IPV4_CIDR
+                if isinstance(parsed, ipaddress.IPv4Network)
+                else WindowsFirewallIpcV2AddressKind.IPV6_CIDR
+            )
+        else:
+            parsed = ipaddress.ip_address(address)
+            kind = (
+                WindowsFirewallIpcV2AddressKind.IPV4
+                if isinstance(parsed, ipaddress.IPv4Address)
+                else WindowsFirewallIpcV2AddressKind.IPV6
+            )
+        return WindowsFirewallIpcV2Address(kind, value=str(parsed))
+    except ValueError:
+        raise WindowsComContractError(
+            WindowsComFailureCategory.INVALID_RESULT
+        ) from None
+
+
+def windows_firewall_ipc_v2_rule_to_raw(
+    rule: WindowsFirewallIpcV2Rule,
+) -> RawWindowsFirewallRule:
+    if not isinstance(rule, WindowsFirewallIpcV2Rule):
+        raise TypeError("v2-to-raw conversion requires a validated v2 rule.")
+    return RawWindowsFirewallRule(
+        policy_view=WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+        enabled=rule.enabled,
+        direction=rule.direction,
+        action=rule.action,
+        profile_mask=rule.profile_mask,
+        protocol=rule.protocol,
+        local_ports=rule.local_ports,
+        remote_ports=rule.remote_ports,
+        local_addresses=tuple(
+            windows_firewall_ipc_v2_address_to_raw(value)
+            for value in rule.local_addresses
+        ),
+        remote_addresses=tuple(
+            windows_firewall_ipc_v2_address_to_raw(value)
+            for value in rule.remote_addresses
+        ),
+        application_path=rule.application_path,
+        service_name=rule.service_name,
+        interface_types=rule.interface_types,
+        interfaces=rule.interfaces,
+        edge_traversal=rule.edge_traversal,
+        unsupported_features=rule.unsupported_features,
+    )
+
+
+def windows_firewall_raw_rule_to_ipc_v2(
+    rule: RawWindowsFirewallRule,
+) -> WindowsFirewallIpcV2Rule:
+    if not isinstance(rule, RawWindowsFirewallRule):
+        raise TypeError("raw-to-v2 conversion requires a validated raw rule.")
+    return WindowsFirewallIpcV2Rule(
+        enabled=rule.enabled,
+        direction=rule.direction,
+        action=rule.action,
+        profile_mask=rule.profile_mask,
+        protocol=rule.protocol,
+        local_ports=rule.local_ports,
+        remote_ports=rule.remote_ports,
+        local_addresses=tuple(
+            windows_firewall_raw_address_to_ipc_v2(value)
+            for value in rule.local_addresses
+        ),
+        remote_addresses=tuple(
+            windows_firewall_raw_address_to_ipc_v2(value)
+            for value in rule.remote_addresses
+        ),
+        application_path=rule.application_path,
+        service_name=rule.service_name,
+        interface_types=rule.interface_types,
+        interfaces=rule.interfaces,
+        edge_traversal=rule.edge_traversal,
+        unsupported_features=rule.unsupported_features,
+    )
+
+
 def run_isolated_windows_firewall_helper(
     launcher: WindowsFirewallHelperLauncherProtocol,
     *,
@@ -353,8 +796,8 @@ def run_isolated_windows_firewall_helper(
             or trace.events != (WindowsFirewallHelperLifecycleState.NOT_STARTED,):
         raise TypeError("helper lifecycle must be a fresh typed tracker.")
     try:
-        request = encode_windows_firewall_helper_request(
-            WindowsFirewallHelperRequest()
+        request = encode_windows_firewall_ipc_v2_request(
+            WindowsFirewallIpcV2Request()
         )
         process = launcher.start(request)
         if not isinstance(process, WindowsFirewallHelperProcessProtocol):
@@ -389,7 +832,7 @@ def run_isolated_windows_firewall_helper(
     primary: WindowsFirewallRuleResultCode | None = None
     response = None
     try:
-        response = decode_windows_firewall_helper_response(wait.payload)
+        response = decode_windows_firewall_ipc_v2_response(wait.payload)
     except WindowsComContractError as exc:
         primary = _result_code(exc.category)
         trace.transition(WindowsFirewallHelperLifecycleState.MALFORMED_RESPONSE)
@@ -403,7 +846,11 @@ def run_isolated_windows_firewall_helper(
     if exit_code != WindowsFirewallHelperExitCode.SUCCESS:
         return _failure(WindowsFirewallRuleResultCode.INTERNAL_ERROR)
     assert response is not None
-    return response.result
+    return WindowsFirewallRuleCollectionResult(
+        response.result,
+        response.authority,
+        tuple(windows_firewall_ipc_v2_rule_to_raw(rule) for rule in response.rules),
+    )
 
 
 def _terminate_and_reap(
@@ -535,6 +982,118 @@ def _decode_rule(value: object, authority: WindowsFirewallPolicyView):
     )
 
 
+def _encode_v2_rule(rule: WindowsFirewallIpcV2Rule) -> dict[str, object]:
+    return {
+        "action": rule.action.value,
+        "application_path": (
+            rule.application_path.consume_for_normalization()
+            if rule.application_path is not None else None
+        ),
+        "direction": rule.direction.value,
+        "edge_traversal": rule.edge_traversal,
+        "enabled": rule.enabled,
+        "interface_types": [value.value for value in rule.interface_types],
+        "interfaces": [value.consume_for_normalization() for value in rule.interfaces],
+        "local_addresses": [_encode_v2_address(value)
+                            for value in rule.local_addresses],
+        "local_ports": list(rule.local_ports),
+        "profile_mask": rule.profile_mask,
+        "protocol": rule.protocol,
+        "remote_addresses": [_encode_v2_address(value)
+                             for value in rule.remote_addresses],
+        "remote_ports": list(rule.remote_ports),
+        "service_name": rule.service_name,
+        "unsupported_features": [
+            value.value for value in rule.unsupported_features
+        ],
+    }
+
+
+def _decode_v2_rule(value: object) -> WindowsFirewallIpcV2Rule:
+    _exact_fields(value, _RULE_FIELDS)
+    application = value["application_path"]
+    interfaces = value["interfaces"]
+    if application is not None and not isinstance(application, str):
+        raise ValueError
+    if not isinstance(interfaces, list):
+        raise ValueError
+    return WindowsFirewallIpcV2Rule(
+        enabled=value["enabled"],
+        direction=WindowsRawFirewallRuleDirection(value["direction"]),
+        action=WindowsRawFirewallRuleAction(value["action"]),
+        profile_mask=value["profile_mask"],
+        protocol=value["protocol"],
+        local_ports=_text_tuple(value["local_ports"]),
+        remote_ports=_text_tuple(value["remote_ports"]),
+        local_addresses=_decode_v2_addresses(value["local_addresses"]),
+        remote_addresses=_decode_v2_addresses(value["remote_addresses"]),
+        application_path=(
+            RawWindowsApplicationPath(application) if application is not None else None
+        ),
+        service_name=value["service_name"],
+        interface_types=tuple(
+            WindowsRawFirewallInterfaceType(item)
+            for item in _text_tuple(value["interface_types"])
+        ),
+        interfaces=tuple(
+            RawWindowsInterfaceIdentity(item) for item in _text_tuple(interfaces)
+        ),
+        edge_traversal=value["edge_traversal"],
+        unsupported_features=tuple(
+            WindowsRawFirewallUnsupportedFeature(item)
+            for item in _text_tuple(value["unsupported_features"])
+        ),
+    )
+
+
+def _encode_v2_address(address: WindowsFirewallIpcV2Address) -> dict[str, str]:
+    if address.kind in {
+        WindowsFirewallIpcV2AddressKind.ANY,
+        WindowsFirewallIpcV2AddressKind.LOCAL_SUBNET,
+    }:
+        return {"kind": address.kind.value}
+    if address.kind in {
+        WindowsFirewallIpcV2AddressKind.IPV4_RANGE,
+        WindowsFirewallIpcV2AddressKind.IPV6_RANGE,
+    }:
+        assert address.start is not None and address.end is not None
+        return {"end": address.end, "kind": address.kind.value,
+                "start": address.start}
+    assert address.value is not None
+    return {"kind": address.kind.value, "value": address.value}
+
+
+def _decode_v2_addresses(value: object) -> tuple[WindowsFirewallIpcV2Address, ...]:
+    if not isinstance(value, list) or len(value) > MAX_VALUES_PER_CONDITION:
+        raise ValueError
+    return tuple(_decode_v2_address(item) for item in value)
+
+
+def _decode_v2_address(value: object) -> WindowsFirewallIpcV2Address:
+    if not isinstance(value, dict):
+        raise ValueError
+    kind_value = value.get("kind")
+    if not isinstance(kind_value, str):
+        raise ValueError
+    kind = WindowsFirewallIpcV2AddressKind(kind_value)
+    if kind in {
+        WindowsFirewallIpcV2AddressKind.ANY,
+        WindowsFirewallIpcV2AddressKind.LOCAL_SUBNET,
+    }:
+        _exact_fields(value, {"kind"})
+        return WindowsFirewallIpcV2Address(kind)
+    if kind in {
+        WindowsFirewallIpcV2AddressKind.IPV4_RANGE,
+        WindowsFirewallIpcV2AddressKind.IPV6_RANGE,
+    }:
+        _exact_fields(value, {"end", "kind", "start"})
+        return WindowsFirewallIpcV2Address(
+            kind, start=value["start"], end=value["end"]
+        )
+    _exact_fields(value, {"kind", "value"})
+    return WindowsFirewallIpcV2Address(kind, value=value["value"])
+
+
 def _text_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, list) or len(value) > MAX_VALUES_PER_CONDITION \
             or not all(isinstance(item, str) for item in value):
@@ -556,6 +1115,39 @@ def _payload(
             WindowsComFailureCategory.INVALID_RESULT
         ) from None
     return WindowsFirewallIpcPayload(kind, encoded)
+
+
+def _payload_v2(
+    kind: WindowsFirewallIpcPayloadKind,
+    value: dict[str, object],
+) -> WindowsFirewallIpcPayload:
+    maximum = (
+        MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES
+        if kind == WindowsFirewallIpcPayloadKind.REQUEST
+        else MAX_WINDOWS_FIREWALL_IPC_RESPONSE_BYTES
+    )
+    chunks: list[bytes] = []
+    size = 0
+    encoder = json.JSONEncoder(
+        sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        allow_nan=False,
+    )
+    try:
+        for chunk in encoder.iterencode(value):
+            encoded = chunk.encode("utf-8")
+            size += len(encoded)
+            if size > maximum:
+                raise WindowsComContractError(
+                    WindowsComFailureCategory.LIMIT_EXCEEDED
+                )
+            chunks.append(encoded)
+    except WindowsComContractError:
+        raise
+    except (TypeError, ValueError):
+        raise WindowsComContractError(
+            WindowsComFailureCategory.INVALID_RESULT
+        ) from None
+    return WindowsFirewallIpcPayload(kind, b"".join(chunks))
 
 
 def _decode_payload(

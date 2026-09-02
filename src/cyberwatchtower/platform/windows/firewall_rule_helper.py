@@ -7,11 +7,14 @@ import sys
 from .firewall_rule_ipc import (
     MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES,
     WindowsFirewallHelperExitCode,
-    WindowsFirewallHelperResponse,
+    WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2,
+    WindowsFirewallIpcV2Request,
+    WindowsFirewallIpcV2Response,
     WindowsFirewallIpcPayload,
     WindowsFirewallIpcPayloadKind,
-    decode_windows_firewall_helper_request,
-    encode_windows_firewall_helper_response,
+    decode_windows_firewall_ipc_v2_request,
+    encode_windows_firewall_ipc_v2_response,
+    windows_firewall_raw_rule_to_ipc_v2,
 )
 from .firewall_com_contracts import WindowsComContractError
 from .firewall_rule_models import (
@@ -19,8 +22,6 @@ from .firewall_rule_models import (
     WindowsFirewallRuleCollectionResult,
     WindowsFirewallRuleResultCode,
 )
-
-
 def _collect_backend() -> WindowsFirewallRuleCollectionResult:
     if sys.platform != "win32":
         return WindowsFirewallRuleCollectionResult(
@@ -41,16 +42,22 @@ def main() -> int:
         request = WindowsFirewallIpcPayload(
             WindowsFirewallIpcPayloadKind.REQUEST, raw
         )
-        decode_windows_firewall_helper_request(request)
+        decoded = decode_windows_firewall_ipc_v2_request(request)
+        if decoded != WindowsFirewallIpcV2Request():
+            raise ValueError("fixed helper request is invalid.")
     except Exception:
-        # Invalid requests produce no response or private diagnostic content.
+        # Invalid requests produce no response or private error content.
         return int(WindowsFirewallHelperExitCode.PROTOCOL_FAILURE)
 
     try:
         result = _collect_backend()
-        response = encode_windows_firewall_helper_response(
-            WindowsFirewallHelperResponse(
-                "1", WindowsFirewallPolicyView.CURRENT_POLICY_VIEW, result
+        response = encode_windows_firewall_ipc_v2_response(
+            WindowsFirewallIpcV2Response(
+                WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2,
+                WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+                result.state,
+                tuple(windows_firewall_raw_rule_to_ipc_v2(rule)
+                      for rule in result.rules),
             )
         )
         sys.stdout.buffer.write(response.consume_inside_boundary())
@@ -62,9 +69,11 @@ def main() -> int:
                 WindowsFirewallRuleResultCode(exc.category.value),
                 WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
             )
-            response = encode_windows_firewall_helper_response(
-                WindowsFirewallHelperResponse(
-                    "1", WindowsFirewallPolicyView.CURRENT_POLICY_VIEW, result
+            response = encode_windows_firewall_ipc_v2_response(
+                WindowsFirewallIpcV2Response(
+                    WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2,
+                    WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+                    result.state,
                 )
             )
             sys.stdout.buffer.write(response.consume_inside_boundary())
@@ -75,7 +84,6 @@ def main() -> int:
     except Exception:
         # The fixed helper emits no exception/native text or traceback.
         return int(WindowsFirewallHelperExitCode.PROTOCOL_FAILURE)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

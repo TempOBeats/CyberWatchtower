@@ -23,8 +23,6 @@ from .firewall_rule_ipc import (
     WindowsFirewallIpcPayload,
     WindowsFirewallIpcPayloadKind,
 )
-
-
 _HELPER_MODULE = "cyberwatchtower.platform.windows.firewall_rule_helper"
 _READ_CHUNK_BYTES = 64 * 1024
 _POLL_INTERVAL_SECONDS = 0.01
@@ -84,7 +82,6 @@ class _WindowsFirewallSubprocessProcess:
         self._reader_done = threading.Event()
         self._read_error = False
         self._reader: threading.Thread | None = None
-
     def start_reader(self) -> None:
         if self._reader is not None:
             raise WindowsComContractError(WindowsComFailureCategory.INTERNAL_ERROR)

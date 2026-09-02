@@ -37,8 +37,6 @@ from .firewall_rule_models import (
     WindowsRawFirewallRuleDirection,
     WindowsRawFirewallUnsupportedFeature,
 )
-
-
 WINDOWS_NET_FW_RULE_DIR_IN = 1
 WINDOWS_NET_FW_RULE_DIR_OUT = 2
 WINDOWS_NET_FW_ACTION_BLOCK = 0
@@ -53,6 +51,23 @@ WINDOWS_ICMP_PROTOCOLS = frozenset({1, 58})
 class WindowsComInterfaceAvailability(str, Enum):
     AVAILABLE = "AVAILABLE"
     UNAVAILABLE = "UNAVAILABLE"
+
+
+class _WindowsFirewallCsvFailureReason(str, Enum):
+    EMPTY_ELEMENT = "EMPTY_ELEMENT"
+    ENTRY_LIMIT_EXCEEDED = "ENTRY_LIMIT_EXCEEDED"
+
+
+class _WindowsFirewallCsvError(WindowsComContractError):
+    """Sanitized closed CSV failure used for narrow internal recovery."""
+
+    __slots__ = ("reason",)
+
+    def __init__(self, reason: _WindowsFirewallCsvFailureReason) -> None:
+        if not isinstance(reason, _WindowsFirewallCsvFailureReason):
+            raise TypeError("CSV failure must use the closed reason.")
+        self.reason = reason
+        super().__init__(WindowsComFailureCategory.INVALID_RESULT)
 
 
 @runtime_checkable
@@ -193,12 +208,33 @@ def _read_rule(
                        ledger)
     protocol = _scalar(base.get_protocol, WindowsFirewallPropertyGetter.PROTOCOL,
                        ledger)
-    local_ports = _csv_bstr(
-        base.get_local_ports, WindowsFirewallPropertyGetter.LOCAL_PORTS, ledger
-    )
-    remote_ports = _csv_bstr(
-        base.get_remote_ports, WindowsFirewallPropertyGetter.REMOTE_PORTS, ledger
-    )
+    protocol_value = _require_int(protocol)
+    unsupported: set[WindowsRawFirewallUnsupportedFeature] = set()
+    try:
+        local_ports = _csv_bstr(
+            base.get_local_ports, WindowsFirewallPropertyGetter.LOCAL_PORTS, ledger
+        )
+    except _WindowsFirewallCsvError as exc:
+        if exc.reason != _WindowsFirewallCsvFailureReason.EMPTY_ELEMENT \
+                or protocol_value not in {6, 17}:
+            raise
+        local_ports = ()
+        unsupported.add(
+            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+        )
+    try:
+        remote_ports = _csv_bstr(
+            base.get_remote_ports, WindowsFirewallPropertyGetter.REMOTE_PORTS,
+            ledger,
+        )
+    except _WindowsFirewallCsvError as exc:
+        if exc.reason != _WindowsFirewallCsvFailureReason.EMPTY_ELEMENT \
+                or protocol_value not in {6, 17}:
+            raise
+        remote_ports = ()
+        unsupported.add(
+            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+        )
     local_addresses = _csv_bstr(
         base.get_local_addresses, WindowsFirewallPropertyGetter.LOCAL_ADDRESSES,
         ledger,
@@ -222,7 +258,6 @@ def _read_rule(
         ledger,
     )
     interfaces = _interfaces(base, ledger)
-    unsupported: set[WindowsRawFirewallUnsupportedFeature] = set()
     if _require_int(protocol) in WINDOWS_ICMP_PROTOCOLS:
         icmp = _optional_bstr(
             base.get_icmp_types_and_codes,
@@ -268,30 +303,36 @@ def _read_rule(
             WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
         )
 
+    enabled_value = _strict_bool(enabled)
+    direction_value = {
+        WINDOWS_NET_FW_RULE_DIR_IN: WindowsRawFirewallRuleDirection.INBOUND,
+        WINDOWS_NET_FW_RULE_DIR_OUT: WindowsRawFirewallRuleDirection.OUTBOUND,
+    }.get(_require_int(direction))
+    action_value = {
+        WINDOWS_NET_FW_ACTION_BLOCK: WindowsRawFirewallRuleAction.BLOCK,
+        WINDOWS_NET_FW_ACTION_ALLOW: WindowsRawFirewallRuleAction.ALLOW,
+    }.get(_require_int(action))
+    application_value = (
+        RawWindowsApplicationPath(application_text)
+        if application_text is not None else None
+    )
+    interface_type_values = _interface_types(interface_types_text)
+    interface_values = tuple(RawWindowsInterfaceIdentity(item) for item in interfaces)
     return RawWindowsFirewallRule(
         policy_view=WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
-        enabled=_strict_bool(enabled),
-        direction={
-            WINDOWS_NET_FW_RULE_DIR_IN: WindowsRawFirewallRuleDirection.INBOUND,
-            WINDOWS_NET_FW_RULE_DIR_OUT: WindowsRawFirewallRuleDirection.OUTBOUND,
-        }.get(_require_int(direction)),
-        action={
-            WINDOWS_NET_FW_ACTION_BLOCK: WindowsRawFirewallRuleAction.BLOCK,
-            WINDOWS_NET_FW_ACTION_ALLOW: WindowsRawFirewallRuleAction.ALLOW,
-        }.get(_require_int(action)),
+        enabled=enabled_value,
+        direction=direction_value,
+        action=action_value,
         profile_mask=_require_int(profiles),
-        protocol=_require_int(protocol),
+        protocol=protocol_value,
         local_ports=local_ports,
         remote_ports=remote_ports,
         local_addresses=local_addresses,
         remote_addresses=remote_addresses,
-        application_path=(
-            RawWindowsApplicationPath(application_text)
-            if application_text is not None else None
-        ),
+        application_path=application_value,
         service_name=service_name,
-        interface_types=_interface_types(interface_types_text),
-        interfaces=tuple(RawWindowsInterfaceIdentity(item) for item in interfaces),
+        interface_types=interface_type_values,
+        interfaces=interface_values,
         edge_traversal=edge_traversal,
         unsupported_features=tuple(sorted(unsupported, key=lambda item: item.value)),
     )
@@ -385,10 +426,19 @@ def _csv_bstr(call, getter, ledger) -> tuple[str, ...]:
     value = _optional_bstr(call, getter, ledger)
     if value is None:
         return ()
+    return _tokenize_csv(value)
+
+
+def _tokenize_csv(value: str) -> tuple[str, ...]:
     parts = tuple(item.strip() for item in value.split(","))
-    if not parts or any(not item for item in parts) \
-            or len(parts) > MAX_VALUES_PER_CONDITION:
-        raise WindowsComContractError(WindowsComFailureCategory.INVALID_RESULT)
+    if not parts or any(not item for item in parts):
+        raise _WindowsFirewallCsvError(
+            _WindowsFirewallCsvFailureReason.EMPTY_ELEMENT
+        )
+    if len(parts) > MAX_VALUES_PER_CONDITION:
+        raise _WindowsFirewallCsvError(
+            _WindowsFirewallCsvFailureReason.ENTRY_LIMIT_EXCEEDED
+        )
     return parts
 
 
