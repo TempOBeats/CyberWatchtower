@@ -185,6 +185,120 @@ class FirewallPolicyContractTests(unittest.TestCase):
             self.assertEqual(result.matches[0].condition_match,
                              FirewallConditionMatch.INDETERMINATE)
 
+    def test_unmodeled_application_candidate_is_conservative_and_distinct(self):
+        marker = (
+            FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE,
+        )
+        unrestricted = rule(application=ANY_APPLICATION)
+        unknown_allow = rule(
+            application=ANY_APPLICATION, unsupported_features=marker
+        )
+        unknown_block = rule(
+            action=FirewallRuleAction.BLOCK,
+            application=ANY_APPLICATION,
+            unsupported_features=marker,
+        )
+        exact = rule(application=FirewallApplicationCondition(
+            ApplicationConditionKind.APPLICATION_DIGEST, "b" * 64
+        ))
+
+        self.assertNotEqual(
+            unrestricted.semantic_rule_id, unknown_allow.semantic_rule_id
+        )
+        self.assertNotEqual(exact.semantic_rule_id, unknown_allow.semantic_rule_id)
+        self.assertEqual(
+            normalize_firewall_rules((unknown_allow, unknown_allow)),
+            (unknown_allow,),
+        )
+
+        subjects = (
+            subject(bind_exposure=BindExposure.ALL_INTERFACES),
+            subject(bind_exposure=BindExposure.INTERFACE),
+            subject(application_digest=None),
+        )
+        for candidate in subjects:
+            for unknown in (unknown_allow, unknown_block):
+                with self.subTest(subject=candidate, action=unknown.action):
+                    assessment = evaluate_listener_policy(
+                        candidate, (unknown,), CoverageState.COMPLETE
+                    )
+                    self.assertEqual(
+                        assessment.applicability,
+                        FirewallRuleApplicability.INCOMPLETE,
+                    )
+                    self.assertEqual(
+                        assessment.matches[0].condition_match,
+                        FirewallConditionMatch.INDETERMINATE,
+                    )
+
+    def test_unmodeled_application_candidate_allows_definitive_exclusion(self):
+        marker = (
+            FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE,
+        )
+        cases = (
+            rule(enabled=FirewallRuleEnabledState.DISABLED,
+                 unsupported_features=marker),
+            rule(direction=FirewallRuleDirection.OUTBOUND,
+                 unsupported_features=marker),
+            rule(profiles=(FirewallProfile.DOMAIN,), unsupported_features=marker),
+            rule(protocol=NetworkProtocol.UDP, unsupported_features=marker),
+            rule(local_ports=(FirewallPortRange(80, 80),),
+                 unsupported_features=marker),
+            rule(local_addresses=(FirewallAddressCondition(
+                AddressConditionKind.EXACT, "192.0.2.1"
+            ),), unsupported_features=marker),
+        )
+        for value in cases:
+            with self.subTest(rule=value):
+                assessment = evaluate_listener_policy(
+                    subject(), (value,), CoverageState.COMPLETE
+                )
+                self.assertEqual(
+                    assessment.applicability, FirewallRuleApplicability.NO_MATCH
+                )
+
+    def test_unmodeled_application_candidate_multi_rule_and_other_predicates(self):
+        marker = (
+            FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE,
+        )
+        unknown_allow = rule(unsupported_features=marker)
+        unknown_block = rule(
+            action=FirewallRuleAction.BLOCK, unsupported_features=marker
+        )
+        complete_allow = rule()
+        complete_block = rule(action=FirewallRuleAction.BLOCK)
+        combinations = (
+            (complete_allow, unknown_block),
+            (complete_block, unknown_allow),
+            (unknown_allow, unknown_block),
+        )
+        for values in combinations:
+            ordered = tuple(sorted(values, key=lambda item: item.semantic_rule_id))
+            assessment = evaluate_listener_policy(
+                subject(), ordered, CoverageState.COMPLETE
+            )
+            self.assertEqual(
+                assessment.applicability, FirewallRuleApplicability.INCOMPLETE
+            )
+
+        service_scoped = rule(
+            application=FirewallApplicationCondition(
+                ApplicationConditionKind.SERVICE_IDENTITY,
+                "windows-service:https",
+            ),
+            unsupported_features=marker,
+        )
+        recovered_ports = rule(
+            local_ports=(), unsupported_features=marker
+        )
+        for value in (service_scoped, recovered_ports):
+            assessment = evaluate_listener_policy(
+                subject(), (value,), CoverageState.COMPLETE
+            )
+            self.assertEqual(
+                assessment.applicability, FirewallRuleApplicability.INCOMPLETE
+            )
+
     def test_restricted_remote_address_is_conditional_not_universal(self):
         restricted = rule(remote_addresses=(
             FirewallAddressCondition(AddressConditionKind.CIDR, "192.0.2.0/24"),
