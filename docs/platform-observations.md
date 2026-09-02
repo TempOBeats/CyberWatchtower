@@ -416,15 +416,29 @@ owned Rules collection through the Phase 2B.3 engine and Phase 2B.2 reader. COM
 initialization, Policy2, Rules, enumerator, per-rule interfaces, BSTRs,
 VARIANTs, and SAFEARRAY-backed values retain their frozen explicit cleanup
 contracts. Raw application paths and interface identities remain private to
-the helper/IPC raw boundary and are digested by the existing Phase 2A
-normalizer before becoming platform-neutral observations.
+the helper/IPC raw boundary. Exact application identities are digested under
+the existing Phase 2A contract; a valid application predicate that cannot meet
+that exact contract is discarded as private provenance and represented by the
+generic unmodeled-platform marker, never as an unrestricted rule.
+
+The fixed production transport uses IPC v2 with tagged IPv4 and IPv6 address
+ranges. Native range parsing is strict and normalization preserves typed range
+endpoints while applicability remains conservative. A port predicate containing
+an empty comma-delimited element is not repaired or accepted as normal grammar:
+only that bounded structural case is retained as an unmodeled predicate, while
+entry-limit, numeric, range, keyword, carrier, and ownership failures remain
+fail-closed. A completely enumerated collection may therefore remain
+`COMPLETE` while listener-policy applicability is `INCOMPLETE` wherever an
+explicitly unmodeled predicate could matter.
 
 Native collection remains `CURRENT_POLICY_VIEW`, not an effective-policy
 claim. It is not exposed through NativeWindowsApi or WindowsPlatformAdapter and
 cannot influence scanning, reachability, findings, reports, memory, scoring,
-Advisor, briefing, or providers. A guarded Windows validation test is skipped
-unless explicitly enabled; Phase 2B.6 portable verification does not run live
-COM or native firewall collection. Production security-decision routing is
+Advisor, briefing, or providers. Collection is passive and performs no
+firewall mutation, network probing, filesystem resolution, or active
+reachability inference. A guarded Windows validation test is skipped unless
+explicitly enabled; ordinary Phase 2B.6 verification does not run live COM or
+native firewall collection. Production security-decision routing is
 reserved for a later separately reviewed phase.
 
 Future adapters must:
