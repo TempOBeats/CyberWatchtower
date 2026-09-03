@@ -32,6 +32,9 @@ from cyberwatchtower.platform.windows import (
     WindowsServiceState,
     WindowsTcpState,
 )
+from cyberwatchtower.platform.windows.firewall_policy_integration import (
+    ClosedWindowsFirewallPolicyProvider,
+)
 from cyberwatchtower.reporting import finding_to_dict, save_json_report
 from cyberwatchtower.scanner import run_scan
 from cyberwatchtower.scoring import calculate_security_score
@@ -142,9 +145,10 @@ class ProductionScannerV2Tests(unittest.TestCase):
         self.assertEqual(calculate_security_score([])["score"], 100)
 
     def test_windows_style_fixture_is_82_moderate_with_partial_assurance(self):
-        result = run_scan(WindowsPlatformAdapter(FakeWindowsApi(
-            windows_style_fixture()
-        )))
+        result = run_scan(WindowsPlatformAdapter(
+            FakeWindowsApi(windows_style_fixture()),
+            ClosedWindowsFirewallPolicyProvider(),
+        ))
         network = [item for item in result["findings"] if item.source == "network"]
         confirmed_network = [
             item for item in network
@@ -171,9 +175,10 @@ class ProductionScannerV2Tests(unittest.TestCase):
         )
 
     def test_report_history_and_memory_use_explicit_v2(self):
-        result = run_scan(WindowsPlatformAdapter(FakeWindowsApi(
-            windows_style_fixture()
-        )))
+        result = run_scan(WindowsPlatformAdapter(
+            FakeWindowsApi(windows_style_fixture()),
+            ClosedWindowsFirewallPolicyProvider(),
+        ))
         with tempfile.TemporaryDirectory() as directory:
             v2_path = save_json_report(result, Path(directory, "reports"))
             current = json.loads(v2_path.read_text(encoding="utf-8"))

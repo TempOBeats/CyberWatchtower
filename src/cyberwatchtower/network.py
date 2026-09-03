@@ -202,16 +202,30 @@ def enrich_process_intelligence(
 def assess_network_exposure(
     services: list[dict],
     policy_basis: tuple = (),
+    policy_assessments: tuple | None = None,
 ) -> list[dict]:
     """Assess listening services for potentially risky exposure."""
 
     from .platform.models import BindExposure
     from .presentation import listener_group_id
+    from .firewall_policy import ListenerPolicyAssessment
     from .reachability import assess_listener_reachability
+
+    if policy_assessments is not None and (
+        not isinstance(policy_assessments, tuple)
+        or len(policy_assessments) != len(services)
+        or not all(
+            isinstance(value, ListenerPolicyAssessment)
+            for value in policy_assessments
+        )
+    ):
+        raise ValueError(
+            "listener policy assessments must align exactly with services."
+        )
 
     findings = []
 
-    for service in services:
+    for index, service in enumerate(services):
         exposure = service.get("exposure")
         port = service.get("port", "unknown")
         protocol = service.get("protocol", "unknown")
@@ -222,7 +236,8 @@ def assess_network_exposure(
         application_name = service.get("application_name")
         risk = classify_service_risk(service)
         reachability = assess_listener_reachability(
-            BindExposure(exposure), policy_basis
+            BindExposure(exposure), policy_basis,
+            None if policy_assessments is None else policy_assessments[index],
         )
 
         if exposure == "all_interfaces":

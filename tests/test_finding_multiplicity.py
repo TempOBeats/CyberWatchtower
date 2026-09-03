@@ -26,6 +26,9 @@ from cyberwatchtower.platform.windows import (
     FakeWindowsApi, RawProcessInfo, RawUdpEndpoint, WindowsAddressFamily,
     WindowsPlatformAdapter,
 )
+from cyberwatchtower.platform.windows.firewall_policy_integration import (
+    ClosedWindowsFirewallPolicyProvider,
+)
 from cyberwatchtower.reachability import RemoteReachabilityState
 from cyberwatchtower.reporting import save_json_report
 from cyberwatchtower.scanner import run_scan
@@ -89,7 +92,9 @@ def duplicate_windows_result(count=2):
             (pid, ok(RawProcessInfo(pid, "example.exe"))) for pid in pids
         ),
     )
-    return run_scan(WindowsPlatformAdapter(FakeWindowsApi(updated)))
+    return run_scan(WindowsPlatformAdapter(
+        FakeWindowsApi(updated), ClosedWindowsFirewallPolicyProvider()
+    ))
 
 
 class CanonicalFindingMultiplicityTests(unittest.TestCase):
@@ -216,6 +221,7 @@ class CanonicalFindingMultiplicityTests(unittest.TestCase):
         legacy["schema_version"] = "1.4"
         for item in legacy["findings"]:
             item.pop("runtime_instance_count")
+            item.pop("network_context", None)
         normalized_legacy, _ = normalize_report(legacy)
         self.assertTrue(all(
             item.runtime_instance_count == 1 for item in normalized_legacy.findings

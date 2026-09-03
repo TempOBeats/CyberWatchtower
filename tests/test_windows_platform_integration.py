@@ -28,6 +28,9 @@ from cyberwatchtower.platform.windows import (
     WindowsServiceState,
     WindowsTcpState,
 )
+from cyberwatchtower.platform.windows.firewall_policy_integration import (
+    ClosedWindowsFirewallPolicyProvider,
+)
 from cyberwatchtower.reporting import finding_to_dict, save_json_report
 from cyberwatchtower.scanner import run_scan
 from cyberwatchtower.history import compare_reports
@@ -99,7 +102,9 @@ def fixture(*, firewall=None, tcp_failure=None, identity=True,
 
 class WindowsPlatformIntegrationTests(unittest.TestCase):
     def scan(self, **kwargs):
-        return run_scan(WindowsPlatformAdapter(FakeWindowsApi(fixture(**kwargs))))
+        return run_scan(WindowsPlatformAdapter(
+            FakeWindowsApi(fixture(**kwargs)), ClosedWindowsFirewallPolicyProvider()
+        ))
 
     def test_complete_fixture_has_frozen_authoritative_results(self):
         result = self.scan()
@@ -107,6 +112,8 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
         self.assertEqual(result["assessment_domains"], [
             "firewall_technology", "firewall_inbound_policy",
             "network_socket_inspection", "network_reachability",
+            "host_firewall_rule_collection",
+            "host_firewall_rule_applicability",
         ])
         self.assertNotIn("iptables_input_policy", result["coverage"])
         self.assertEqual(result["coverage"], {
@@ -114,6 +121,8 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
             "firewall_inbound_policy": "COMPLETE",
             "network_socket_inspection": "COMPLETE",
             "network_reachability": "INCOMPLETE",
+            "host_firewall_rule_collection": "UNKNOWN",
+            "host_firewall_rule_applicability": "UNKNOWN",
         })
         self.assertEqual(result["assessment_assurance"]["level"], "PARTIAL")
         self.assertEqual(
@@ -266,7 +275,9 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(platform.system() == "Windows",
                          "native Windows adapter validation requires Windows")
     def test_native_windows_adapter_read_only_smoke(self):
-        result = run_scan(WindowsPlatformAdapter())
+        result = run_scan(WindowsPlatformAdapter(
+            firewall_policy_provider=ClosedWindowsFirewallPolicyProvider()
+        ))
         self.assertEqual(result["system"].get("operating_system"), "Windows")
 
 

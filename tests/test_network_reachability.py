@@ -29,6 +29,9 @@ from tests.test_windows_platform_integration import (
     profiles,
 )
 from cyberwatchtower.platform.windows import FakeWindowsApi, WindowsPlatformAdapter
+from cyberwatchtower.platform.windows.firewall_policy_integration import (
+    ClosedWindowsFirewallPolicyProvider,
+)
 from cyberwatchtower.platform import (
     FirewallEnablement,
     FirewallInboundAction,
@@ -122,7 +125,9 @@ class ReachabilityContractTests(unittest.TestCase):
 
 class WindowsReachabilityIntegrationTests(unittest.TestCase):
     def scan(self, **kwargs):
-        return run_scan(WindowsPlatformAdapter(FakeWindowsApi(fixture(**kwargs))))
+        return run_scan(WindowsPlatformAdapter(
+            FakeWindowsApi(fixture(**kwargs)), ClosedWindowsFirewallPolicyProvider()
+        ))
 
     def network_finding(self, result):
         return next(item for item in result["findings"] if item.source == "network")
@@ -202,7 +207,9 @@ class WindowsReachabilityIntegrationTests(unittest.TestCase):
 
 class ReachabilityPresentationTests(unittest.TestCase):
     def _report(self):
-        result = run_scan(WindowsPlatformAdapter(FakeWindowsApi(fixture())))
+        result = run_scan(WindowsPlatformAdapter(
+            FakeWindowsApi(fixture()), ClosedWindowsFirewallPolicyProvider()
+        ))
         first = finding_to_dict(next(
             item for item in result["findings"] if item.source == "network"
         ))

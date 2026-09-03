@@ -47,6 +47,11 @@ from .reachability import (
     assess_listener_reachability,
     reachability_coverage,
 )
+from .platform.windows.firewall_policy_integration import (
+    WindowsListenerPolicyAdapterProtocol,
+    WindowsListenerPolicyIntegrationResult,
+    closed_windows_listener_policy,
+)
 
 
 WINDOWS_ASSESSMENT_DOMAINS = (
@@ -54,6 +59,8 @@ WINDOWS_ASSESSMENT_DOMAINS = (
     ScanDomain.FIREWALL_INBOUND_POLICY,
     ScanDomain.NETWORK_SOCKET_INSPECTION,
     ScanDomain.NETWORK_REACHABILITY,
+    ScanDomain.HOST_FIREWALL_RULE_COLLECTION,
+    ScanDomain.HOST_FIREWALL_RULE_APPLICABILITY,
 )
 
 LINUX_ASSESSMENT_DOMAINS = (
@@ -153,11 +160,51 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
     network_result = adapter.collect_network()
     coverage[ScanDomain.NETWORK_SOCKET_INSPECTION.value] = network_result.coverage.value
     services = [item.to_service_mapping() for item in network_result.observations]
+    listener_policy = None
+    policy_assessments = None
+    if platform_name == "windows":
+        try:
+            listener_policy = (
+                adapter.collect_listener_firewall_policy(
+                    network_result.observations,
+                    network_result.coverage,
+                    policy_result,
+                )
+                if isinstance(adapter, WindowsListenerPolicyAdapterProtocol)
+                else None
+            )
+        except Exception:
+            listener_policy = None
+        if not isinstance(
+            listener_policy, WindowsListenerPolicyIntegrationResult
+        ):
+            listener_policy = closed_windows_listener_policy(
+                network_result.observations,
+                network_result.coverage,
+                policy_result,
+                unsupported=not isinstance(
+                    adapter, WindowsListenerPolicyAdapterProtocol
+                ),
+            )
+        if len(listener_policy.assessments) != len(network_result.observations):
+            listener_policy = closed_windows_listener_policy(
+                network_result.observations,
+                network_result.coverage,
+                policy_result,
+            )
+        policy_assessments = listener_policy.assessments
+        coverage[ScanDomain.HOST_FIREWALL_RULE_COLLECTION.value] = (
+            listener_policy.collection_coverage.value
+        )
+        coverage[ScanDomain.HOST_FIREWALL_RULE_APPLICABILITY.value] = (
+            listener_policy.applicability_coverage.value
+        )
     reachability_assessments = tuple(
         assess_listener_reachability(
-            BindExposure(item["exposure"]), policy_basis
+            BindExposure(item["exposure"]), policy_basis,
+            None if policy_assessments is None else policy_assessments[index],
         )
-        for item in services
+        for index, item in enumerate(services)
     )
     coverage[ScanDomain.NETWORK_REACHABILITY.value] = reachability_coverage(
         network_result.coverage, reachability_assessments
@@ -171,7 +218,9 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
             FailureCategory.PARTIAL,
         }
     ):
-        network_findings = assess_network_exposure(services, policy_basis)
+        network_findings = assess_network_exposure(
+            services, policy_basis, policy_assessments
+        )
 
         for network_finding in network_findings:
             finding = Finding(
