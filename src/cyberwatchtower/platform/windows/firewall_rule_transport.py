@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -24,6 +25,12 @@ from .firewall_rule_ipc import (
     WindowsFirewallIpcPayloadKind,
 )
 _HELPER_MODULE = "cyberwatchtower.platform.windows.firewall_rule_helper"
+_HELPER_PACKAGE_ROOT = str(Path(__file__).resolve().parents[3])
+_HELPER_BOOTSTRAP = (
+    "import runpy, sys; "
+    "sys.path.insert(0, sys.argv.pop()); "
+    f"runpy.run_module({_HELPER_MODULE!r}, run_name='__main__', alter_sys=True)"
+)
 _READ_CHUNK_BYTES = 64 * 1024
 _POLL_INTERVAL_SECONDS = 0.01
 _REAP_TIMEOUT_SECONDS = 1.0
@@ -43,7 +50,7 @@ class WindowsFirewallSubprocessLauncher:
             raise WindowsComContractError(WindowsComFailureCategory.INVALID_RESULT)
         try:
             process = subprocess.Popen(
-                (sys.executable, "-I", "-m", _HELPER_MODULE),
+                _fixed_helper_command(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -67,6 +74,18 @@ class WindowsFirewallSubprocessLauncher:
             ) from None
         owned.start_reader()
         return owned
+
+
+def _fixed_helper_command() -> tuple[str, ...]:
+    """Return the closed helper command for installed and source checkouts."""
+
+    return (
+        sys.executable,
+        "-I",
+        "-c",
+        _HELPER_BOOTSTRAP,
+        _HELPER_PACKAGE_ROOT,
+    )
 
 
 class _WindowsFirewallSubprocessProcess:

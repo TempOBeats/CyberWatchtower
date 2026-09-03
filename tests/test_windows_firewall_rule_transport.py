@@ -21,6 +21,7 @@ from cyberwatchtower.platform.windows.firewall_rule_models import (
 )
 from cyberwatchtower.platform.windows.firewall_rule_transport import (
     WindowsFirewallSubprocessLauncher,
+    _fixed_helper_command,
 )
 
 
@@ -162,8 +163,7 @@ class RealHelperTransportTests(unittest.TestCase):
         )
         for payload in payloads:
             process = _REAL_POPEN(
-                (sys.executable, "-I", "-m",
-                 "cyberwatchtower.platform.windows.firewall_rule_helper"),
+                _fixed_helper_command(),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, shell=False,
             )
@@ -175,6 +175,10 @@ class RealHelperTransportTests(unittest.TestCase):
     def test_launcher_is_fixed_and_native_authority_is_helper_confined(self):
         with self.assertRaises(TypeError):
             WindowsFirewallSubprocessLauncher("arbitrary")
+        command = _fixed_helper_command()
+        self.assertEqual(command[:3], (sys.executable, "-I", "-c"))
+        self.assertIn("firewall_rule_helper", command[3])
+        self.assertNotIn('protocol_version="1"', command[3])
         root = Path(__file__).resolve().parents[1]
         transport = (root / "src/cyberwatchtower/platform/windows/"
                      "firewall_rule_transport.py").read_text()
