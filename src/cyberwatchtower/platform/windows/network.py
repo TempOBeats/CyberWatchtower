@@ -136,9 +136,11 @@ def collect_windows_network(
             if application_identity is not None:
                 values["application_digest"] = application_identity
             matching_services = services.get(endpoint.pid, ())
+            observation = None
             if len(matching_services) == 1:
                 service = matching_services[0]
-                values.update({
+                enriched_values = dict(values)
+                enriched_values.update({
                     "application": (
                         f"windows-service:{service.service_name.casefold()}"
                     ),
@@ -148,7 +150,18 @@ def collect_windows_network(
                     "application_name": service.display_name,
                     "known_application": False,
                 })
-            observations.append(ListenerObservation.from_mapping(values))
+                try:
+                    observation = ListenerObservation.from_mapping(
+                        enriched_values
+                    )
+                except (TypeError, ValueError):
+                    # Service attribution is optional. A valid endpoint must
+                    # survive a Windows service name that cannot cross the
+                    # canonical service-identity boundary.
+                    pass
+            observations.append(
+                observation or ListenerObservation.from_mapping(values)
+            )
 
         ordered = tuple(sorted(
             observations,

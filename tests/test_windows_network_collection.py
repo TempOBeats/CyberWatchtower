@@ -195,6 +195,28 @@ class WindowsEndpointNormalizationTests(unittest.TestCase):
         self.assertIsNone(by_port[8082].application)
         self.assertEqual(result.coverage, CoverageState.COMPLETE)
 
+    def test_unrepresentable_service_identity_does_not_erase_endpoint(self):
+        endpoint = RawTcpEndpoint(
+            WindowsAddressFamily.IPV4, "0.0.0.0", 1433, 250,
+            WindowsTcpState.LISTEN,
+        )
+        service = RawServiceInfo(
+            "MSSQL$INSTANCE", "Database Service", 250,
+            WindowsServiceState.RUNNING,
+        )
+
+        result = collect_windows_network(fixture_api(
+            tcp=(endpoint,), services=(service,)
+        ))
+
+        self.assertEqual(result.coverage, CoverageState.COMPLETE)
+        self.assertEqual(len(result.observations), 1)
+        observation = result.observations[0]
+        self.assertEqual(observation.port, 1433)
+        self.assertIsNone(observation.application)
+        self.assertIsNone(observation.application_name)
+        self.assertIsNone(observation.service_identity)
+
     def test_enrichment_failure_does_not_change_endpoint_coverage(self):
         endpoint = RawUdpEndpoint(
             WindowsAddressFamily.IPV4, "0.0.0.0", 53, 4
