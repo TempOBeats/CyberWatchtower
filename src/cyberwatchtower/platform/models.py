@@ -173,6 +173,8 @@ class ListenerObservation:
     application: str | None = None
     application_name: str | None = None
     known_application: bool = False
+    application_digest: str | None = None
+    service_identity: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.protocol, NetworkProtocol):
@@ -194,12 +196,37 @@ class ListenerObservation:
             _text(self.application_name, "listener application name", 1024)
         if not isinstance(self.known_application, bool):
             raise ValueError("known_application must be boolean.")
+        if self.application_digest is not None:
+            digest = _text(
+                self.application_digest, "listener application digest", 64
+            )
+            if len(digest) != 64:
+                raise ValueError("listener application digest must be SHA-256.")
+            try:
+                int(digest, 16)
+            except ValueError as exc:
+                raise ValueError(
+                    "listener application digest must be hexadecimal."
+                ) from exc
+            object.__setattr__(self, "application_digest", digest.casefold())
+        if self.service_identity is not None:
+            identity = _text(
+                self.service_identity, "listener service identity", 256
+            )
+            if identity != identity.casefold() or not identity.startswith(
+                "windows-service:"
+            ) or any(
+                not (character.isalnum() or character in "._:-")
+                for character in identity
+            ):
+                raise ValueError("listener service identity is not canonical.")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object]) -> "ListenerObservation":
         allowed = {
             "protocol", "state", "address", "port", "exposure", "process", "pid",
             "application", "application_name", "known_application",
+            "application_digest", "service_identity",
         }
         if not isinstance(value, Mapping) or set(value) - allowed:
             raise ValueError("listener collection contains unsupported fields.")
@@ -217,6 +244,8 @@ class ListenerObservation:
             value.get("application"),
             value.get("application_name"),
             value.get("known_application", False),
+            value.get("application_digest"),
+            value.get("service_identity"),
         )
 
     def to_service_mapping(self) -> dict[str, object]:
@@ -229,10 +258,11 @@ class ListenerObservation:
             "process": self.process,
             "pid": self.pid,
         }
-        if self.application is not None:
+        application = self.application or self.application_digest
+        if application is not None:
             result.update({
-                "application": self.application,
-                "application_name": self.application_name,
+                "application": application,
+                "application_name": self.application_name or self.process,
                 "known_application": self.known_application,
             })
         return result

@@ -18,6 +18,8 @@ from ..models import (
 )
 from .api import WindowsNetworkApiProtocol
 from .errors import WindowsFailureCode
+from .firewall_rule_models import RawWindowsApplicationPath
+from .firewall_rules import windows_application_identity
 from .models import RawServiceInfo, WindowsServiceState
 
 
@@ -101,6 +103,7 @@ def collect_windows_network(
         observations = []
         for protocol, endpoint in raw_endpoints:
             process_name = "unknown"
+            application_identity = None
             try:
                 process_result = api.get_process_image(endpoint.pid)
                 if (
@@ -109,6 +112,15 @@ def collect_windows_network(
                     and process_result.value.pid == endpoint.pid
                 ):
                     process_name = process_result.value.image_name
+                    if process_result.value.image_path is not None:
+                        try:
+                            application_identity = windows_application_identity(
+                                RawWindowsApplicationPath(
+                                    process_result.value.image_path
+                                )
+                            )
+                        except (TypeError, ValueError):
+                            application_identity = None
             except Exception:
                 pass
 
@@ -121,11 +133,16 @@ def collect_windows_network(
                 "process": process_name,
                 "pid": endpoint.pid,
             }
+            if application_identity is not None:
+                values["application_digest"] = application_identity
             matching_services = services.get(endpoint.pid, ())
             if len(matching_services) == 1:
                 service = matching_services[0]
                 values.update({
                     "application": (
+                        f"windows-service:{service.service_name.casefold()}"
+                    ),
+                    "service_identity": (
                         f"windows-service:{service.service_name.casefold()}"
                     ),
                     "application_name": service.display_name,

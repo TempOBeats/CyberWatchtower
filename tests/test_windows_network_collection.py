@@ -35,6 +35,10 @@ from cyberwatchtower.platform.windows import (
     WindowsServiceState,
     WindowsTcpState,
     collect_windows_network,
+    windows_application_identity,
+)
+from cyberwatchtower.platform.windows.firewall_rule_models import (
+    RawWindowsApplicationPath,
 )
 from cyberwatchtower.platform.windows.native_network import (
     _EndpointValidationFailure,
@@ -73,6 +77,27 @@ def fixture_api(*, tcp=(), udp=(), processes=(), services=(), tcp_result=None,
 
 
 class WindowsEndpointNormalizationTests(unittest.TestCase):
+    def test_process_path_uses_the_frozen_firewall_application_identity(self):
+        path = r"C:\Program Files\Synthetic\listener.exe"
+        endpoint = RawTcpEndpoint(
+            WindowsAddressFamily.IPV4, "0.0.0.0", 443, 300,
+            WindowsTcpState.LISTEN,
+        )
+        result = collect_windows_network(fixture_api(
+            tcp=(endpoint,),
+            processes=((300, success(RawProcessInfo(
+                300, "listener.exe", path
+            ))),),
+        ))
+        observation = result.observations[0]
+        self.assertEqual(
+            observation.application_digest,
+            windows_application_identity(RawWindowsApplicationPath(path)),
+        )
+        self.assertIsNone(observation.application)
+        self.assertNotIn(path, repr(observation))
+        self.assertNotIn("Program Files", repr(observation))
+
     def test_all_address_protocol_and_reserved_pid_variants_are_retained(self):
         tcp = (
             RawTcpEndpoint(WindowsAddressFamily.IPV4, "0.0.0.0", 80, 4,
@@ -161,6 +186,9 @@ class WindowsEndpointNormalizationTests(unittest.TestCase):
         by_port = {item.port: item for item in result.observations}
 
         self.assertEqual(by_port[8080].application, "windows-service:onlysvc")
+        self.assertEqual(
+            by_port[8080].service_identity, "windows-service:onlysvc"
+        )
         self.assertEqual(by_port[8080].application_name, "Only Service")
         self.assertFalse(by_port[8080].known_application)
         self.assertIsNone(by_port[8081].application)
