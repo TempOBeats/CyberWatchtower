@@ -1,6 +1,6 @@
 import io
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from cyberwatchtower.advisor.context import build_advisor_context
@@ -169,6 +169,63 @@ class AdvisorRenderingTests(unittest.TestCase):
         self.assertIn("Trend: SCORING_VERSION_CHANGED", rendered)
         self.assertNotIn("Change: +82", rendered)
         self.assertIn("Average Score: N/A", rendered)
+
+
+class UnsupportedPlatformCliTests(unittest.TestCase):
+    def _assert_contained_failure(self, system_name):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch(
+                "cyberwatchtower.platform.selection.platform.system",
+                return_value=system_name,
+            ),
+            patch(
+                "cyberwatchtower.platform.linux.adapter."
+                "LinuxPlatformAdapter.collect_system"
+            ) as linux_collect,
+            patch(
+                "cyberwatchtower.platform.windows.adapter."
+                "WindowsPlatformAdapter.collect_system"
+            ) as windows_collect,
+            patch("cyberwatchtower.cli.save_json_report") as save_report,
+            patch("cyberwatchtower.cli.load_reports") as load_reports,
+            patch("cyberwatchtower.cli._ingest_saved_report") as write_memory,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            main([])
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(
+            "CyberWatchtower currently supports Windows and Linux.",
+            stdout.getvalue(),
+        )
+        self.assertNotIn(system_name, stdout.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+        linux_collect.assert_not_called()
+        windows_collect.assert_not_called()
+        save_report.assert_not_called()
+        load_reports.assert_not_called()
+        write_memory.assert_not_called()
+
+    def test_darwin_failure_is_bounded_before_collection_or_persistence(self):
+        self._assert_contained_failure("Darwin")
+
+    def test_unknown_platform_failure_is_bounded_without_fallback(self):
+        self._assert_contained_failure("SyntheticUnsupportedPlatform")
+
+    def test_unrelated_internal_error_is_not_swallowed(self):
+        with (
+            patch(
+                "cyberwatchtower.cli.run_scan",
+                side_effect=RuntimeError("programmer error"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "programmer error"),
+        ):
+            main([])
 
 
 if __name__ == "__main__":

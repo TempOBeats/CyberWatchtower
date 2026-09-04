@@ -6,6 +6,7 @@ from pathlib import Path
 from .scanner import run_scan
 from .reporting import save_json_report
 from .history import load_reports, compare_reports
+from .platform.errors import UnsupportedPlatformError
 from cyberwatchtower.intelligence import analyze_history
 
 
@@ -242,7 +243,14 @@ def main(argv=None):
         memory_argument = arguments[index + 1]
         del arguments[index:index + 2]
 
-    results = run_scan()
+    try:
+        results = run_scan()
+    except UnsupportedPlatformError:
+        print(
+            "Unsupported platform. CyberWatchtower currently supports "
+            "Windows and Linux."
+        )
+        raise SystemExit(2) from None
 
     print("SYSTEM INFORMATION")
     print("------------------")
