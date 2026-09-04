@@ -11,7 +11,7 @@ from cyberwatchtower.platform.windows.firewall_rule_ipc import (
     WindowsFirewallHelperExitCode,
     WindowsFirewallHelperWaitResult,
     WindowsFirewallHelperWaitState,
-    decode_windows_firewall_ipc_v2_request,
+    decode_windows_firewall_ipc_v3_request,
     WindowsFirewallIpcV2Response,
     windows_firewall_raw_rule_to_ipc_v2,
 )
@@ -63,7 +63,7 @@ class FakeHelperLauncher:
 
     def start(self, request):
         self.calls += 1
-        self.request = decode_windows_firewall_ipc_v2_request(request)
+        self.request = decode_windows_firewall_ipc_v3_request(request)
         return self.process
 
 
@@ -78,7 +78,7 @@ def network_finding(result):
 
 
 class ProductionProviderContractTests(unittest.TestCase):
-    def test_provider_uses_fixed_v2_runner_and_existing_normalizer(self):
+    def test_provider_uses_fixed_v3_runner_and_existing_normalizer(self):
         provider = provider_for(
             WindowsFirewallRuleResultCode.COMPLETE, raw_rule()
         )
@@ -86,7 +86,7 @@ class ProductionProviderContractTests(unittest.TestCase):
         self.assertEqual(result.coverage.value, "COMPLETE")
         self.assertEqual(len(result.rules), 1)
         self.assertEqual(provider.launcher.calls, 1)
-        self.assertEqual(provider.launcher.request.protocol_version, "2")
+        self.assertEqual(provider.launcher.request.protocol_version, "3")
         self.assertEqual(provider.launcher.process.events[-1], "reap")
 
     def test_all_closed_results_preserve_normalized_failure_contract(self):

@@ -239,6 +239,32 @@ class MockFirewallRule:
 
 
 class WindowsFirewallSingleRuleReaderTests(unittest.TestCase):
+    def test_each_unmodeled_reader_origin_has_closed_provenance(self):
+        cases = (
+            ({"local_ports": "443,"},
+             WindowsRawFirewallUnsupportedFeature.RECOVERED_LOCAL_PORTS),
+            ({"remote_ports": "8443,"},
+             WindowsRawFirewallUnsupportedFeature.RECOVERED_REMOTE_PORTS),
+            ({"rule2_available": False},
+             WindowsRawFirewallUnsupportedFeature.RULE2_UNAVAILABLE),
+            ({"rule3_available": False},
+             WindowsRawFirewallUnsupportedFeature.RULE3_UNAVAILABLE),
+            ({"remote_machine_authorized_list": "PRIVATE_PRINCIPAL_CANARY"},
+             WindowsRawFirewallUnsupportedFeature.REMOTE_PRINCIPAL_OR_SECURE_SCOPE),
+            ({"edge_options": reader.WINDOWS_EDGE_TRAVERSAL_DEFER_TO_APP},
+             WindowsRawFirewallUnsupportedFeature.EDGE_TRAVERSAL_DEFERRED),
+        )
+        for changes, expected in cases:
+            with self.subTest(expected=expected):
+                mock = MockFirewallRule()
+                for name, value in changes.items():
+                    setattr(mock, name, value)
+                result = read_windows_firewall_rule(mock)
+                self.assertIsNotNone(result.rule)
+                self.assertIn(expected, result.rule.unsupported_features)
+                self.assertNotIn("PRIVATE", repr(result))
+                self.assertEqual(mock.released[-1], "rule")
+
     def test_basic_rule_reads_normalizes_and_releases_in_reverse_order(self):
         mock = MockFirewallRule()
         mock.application_name = r"C:\Program Files\Private Canary\app.exe"
@@ -304,10 +330,10 @@ class WindowsFirewallSingleRuleReaderTests(unittest.TestCase):
         mock.rule3_available = False
         result = read_windows_firewall_rule(mock)
         self.assertIsNotNone(result.rule)
-        self.assertIn(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,
-            result.rule.unsupported_features,
-        )
+        self.assertEqual(set(result.rule.unsupported_features), {
+            WindowsRawFirewallUnsupportedFeature.RULE2_UNAVAILABLE,
+            WindowsRawFirewallUnsupportedFeature.RULE3_UNAVAILABLE,
+        })
         self.assertIn(WindowsFirewallPropertyGetter.EDGE_TRAVERSAL, mock.calls)
         self.assertNotIn(
             WindowsFirewallPropertyGetter.EDGE_TRAVERSAL_OPTIONS, mock.calls
@@ -329,7 +355,7 @@ class WindowsFirewallSingleRuleReaderTests(unittest.TestCase):
             WindowsRawFirewallUnsupportedFeature.ICMP_TYPE_CONDITION,
             WindowsRawFirewallUnsupportedFeature.PACKAGE_SCOPE,
             WindowsRawFirewallUnsupportedFeature.LOCAL_USER_SCOPE,
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,
+            WindowsRawFirewallUnsupportedFeature.REMOTE_PRINCIPAL_OR_SECURE_SCOPE,
         })
         for canary in ("PRIVATE_PACKAGE_CANARY", "PRIVATE_USER_CANARY",
                        "PRIVATE_MACHINE_CANARY"):

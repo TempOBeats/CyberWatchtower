@@ -6,11 +6,15 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from cyberwatchtower.firewall_policy import (
+    FirewallPolicyDiagnosticStatus,
+    FirewallPolicyDiagnosticSummary,
     FirewallDefaultPolicyContext,
     FirewallRuleApplicability,
     ListenerPolicyAssessment,
     ListenerPolicyBasis,
     ListenerPolicySubject,
+    aggregate_listener_policy_diagnostics,
+    diagnose_listener_policy,
     evaluate_listener_policy,
     firewall_rule_applicability_coverage,
 )
@@ -339,3 +343,51 @@ def collect_windows_listener_policy(
         assessments,
         failure,
     )
+
+
+def collect_windows_listener_policy_diagnostics(
+    provider: WindowsFirewallPolicyProviderProtocol,
+    listeners: tuple[ListenerObservation, ...],
+    socket_coverage: CoverageState,
+    posture: CollectionResult[FirewallInboundPostureObservation],
+) -> FirewallPolicyDiagnosticSummary:
+    """Collect one bounded aggregate diagnostic without changing scan behavior."""
+
+    if not isinstance(listeners, tuple) or not all(
+        isinstance(listener, ListenerObservation) for listener in listeners
+    ) or not isinstance(socket_coverage, CoverageState):
+        return FirewallPolicyDiagnosticSummary(
+            FirewallPolicyDiagnosticStatus.INVALID_RESULT, 0, 0
+        )
+    try:
+        profile_context = windows_firewall_profile_context(posture)
+        policy = provider.collect_normalized_firewall_policy()
+    except Exception:
+        return FirewallPolicyDiagnosticSummary(
+            FirewallPolicyDiagnosticStatus.INVALID_RESULT, 0, 0
+        )
+    if not isinstance(policy, WindowsFirewallRuleNormalizationResult) or (
+        policy.policy_view != WindowsFirewallPolicyView.CURRENT_POLICY_VIEW
+    ) or policy.coverage != CoverageState.COMPLETE \
+            or socket_coverage != CoverageState.COMPLETE \
+            or not profile_context.evaluation_permitted:
+        return FirewallPolicyDiagnosticSummary(
+            FirewallPolicyDiagnosticStatus.INVALID_RESULT, 0, 0
+        )
+    try:
+        diagnostics = tuple(
+            diagnose_listener_policy(
+                windows_listener_policy_subject(
+                    listener, profile_context.profiles
+                ),
+                policy.rules,
+                CoverageState.COMPLETE,
+                profile_context.default_policy_context,
+            )
+            for listener in listeners
+        )
+        return aggregate_listener_policy_diagnostics(diagnostics)
+    except Exception:
+        return FirewallPolicyDiagnosticSummary(
+            FirewallPolicyDiagnosticStatus.INVALID_RESULT, 0, 0
+        )

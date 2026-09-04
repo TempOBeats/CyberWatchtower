@@ -10,10 +10,10 @@ from cyberwatchtower.platform.windows.firewall_rule_ipc import (
     MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES,
     WindowsFirewallHelperLifecycle,
     WindowsFirewallHelperLifecycleState,
-    WindowsFirewallIpcV2Request,
+    WindowsFirewallIpcV3Request,
     WindowsFirewallIpcPayload,
     WindowsFirewallIpcPayloadKind,
-    encode_windows_firewall_ipc_v2_request,
+    encode_windows_firewall_ipc_v3_request,
     run_isolated_windows_firewall_helper,
 )
 from cyberwatchtower.platform.windows.firewall_rule_models import (
@@ -145,21 +145,23 @@ class RealHelperTransportTests(unittest.TestCase):
         self.assertNotIn("SECRET", repr(result))
 
     def test_real_helper_rejects_malformed_oversized_and_trailing_requests(self):
-        valid = encode_windows_firewall_ipc_v2_request(
-            WindowsFirewallIpcV2Request()).consume_inside_boundary()
+        valid = encode_windows_firewall_ipc_v3_request(
+            WindowsFirewallIpcV3Request()).consume_inside_boundary()
         payloads = (
             b"{bad",
             b"x" * (MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES + 1),
             valid + valid,
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
-            b'"protocol_version":"2","extra":1}',
+            b'"protocol_version":"3","extra":1}',
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
             b'"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
-            b'"protocol_version":"2"}',
+            b'"protocol_version":"3"}',
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
             b'"protocol_version":"999"}',
             b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
             b'"protocol_version":"1"}',
+            b'{"operation":"COLLECT_WINDOWS_FIREWALL_CURRENT_POLICY",'
+            b'"protocol_version":"2"}',
         )
         for payload in payloads:
             process = _REAL_POPEN(
@@ -194,6 +196,9 @@ class RealHelperTransportTests(unittest.TestCase):
         ):
             self.assertNotIn(prohibited, transport_folded)
         self.assertIn("firewall_rule_native", helper)
+        self.assertIn("decode_windows_firewall_ipc_v3_request", helper)
+        self.assertIn("encode_windows_firewall_ipc_v3_response", helper)
+        self.assertNotIn("decode_windows_firewall_ipc_v2_request", helper)
         for prohibited in (
             "GetIDsOfNames", "Invoke", "get_Name", "get_Description",
             "get_Grouping", "get_LocalUserOwner", "PowerShell", "netsh",

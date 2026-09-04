@@ -8,6 +8,8 @@ from cyberwatchtower.firewall_policy import (
     FirewallApplicationCondition,
     FirewallConditionMatch,
     FirewallDefaultPolicyContext,
+    FirewallPolicyDiagnosticStatus,
+    FirewallPolicyIndeterminateCause,
     FirewallRuleAction,
     FirewallRuleApplicability,
     FirewallRuleMatch,
@@ -31,6 +33,7 @@ from cyberwatchtower.platform.models import (
 from cyberwatchtower.platform.windows.firewall_policy_integration import (
     WindowsFirewallPolicyProviderProtocol,
     WindowsListenerPolicyIntegrationResult,
+    collect_windows_listener_policy_diagnostics,
     collect_windows_listener_policy,
     windows_firewall_profile_context,
     windows_listener_policy_subject,
@@ -67,6 +70,57 @@ class FakeNormalizedPolicyProvider:
     def collect_normalized_firewall_policy(self):
         self.calls += 1
         return self.result
+
+
+class WindowsFirewallPolicyDiagnosticIntegrationTests(unittest.TestCase):
+    def test_safe_aggregate_collects_provider_once_for_35_listeners(self):
+        provider = FakeNormalizedPolicyProvider(complete_policy(raw_rule(
+            application_path=RawWindowsApplicationPath(EXACT_PATH)
+        )))
+        listeners = tuple(listener(
+            pid=100 + index,
+            application=None,
+            application_name=None,
+            application_digest=None,
+        ) for index in range(35))
+
+        summary = collect_windows_listener_policy_diagnostics(
+            provider,
+            listeners,
+            CoverageState.COMPLETE,
+            posture(profile()),
+        )
+
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(summary.status, FirewallPolicyDiagnosticStatus.COMPLETE)
+        self.assertEqual(summary.total_listener_assessments, 35)
+        self.assertEqual(summary.incomplete_listener_assessments, 35)
+        self.assertEqual(summary.category_counts, ((
+            FirewallPolicyIndeterminateCause.MISSING_APPLICATION_IDENTITY, 35
+        ),))
+        rendered = repr(summary.to_safe_mapping())
+        self.assertNotIn(EXACT_PATH, rendered)
+        self.assertNotIn(EXACT_DIGEST, rendered)
+
+    def test_diagnostic_provider_failure_is_closed_and_has_no_partial_output(self):
+        class RaisingProvider:
+            def collect_normalized_firewall_policy(self):
+                raise RuntimeError("private diagnostic canary")
+
+        summary = collect_windows_listener_policy_diagnostics(
+            RaisingProvider(),
+            (listener(),),
+            CoverageState.COMPLETE,
+            posture(profile()),
+        )
+
+        self.assertEqual(
+            summary.status, FirewallPolicyDiagnosticStatus.INVALID_RESULT
+        )
+        self.assertEqual(summary.total_listener_assessments, 0)
+        self.assertEqual(summary.incomplete_listener_assessments, 0)
+        self.assertEqual(summary.category_counts, ())
+        self.assertNotIn("private diagnostic canary", repr(summary))
 
 
 def raw_rule(**changes):

@@ -23,6 +23,7 @@ from cyberwatchtower.firewall_policy import (
     FirewallRuleEnabledState,
     FirewallRuleObservation,
     FirewallRuleUnsupportedFeature,
+    FirewallUnmodeledPlatformProvenance,
     InterfaceConditionKind,
     MAX_CONDITIONS_PER_RULE,
     MAX_FIREWALL_RULES,
@@ -351,6 +352,7 @@ def _interface(
 
 def _normalize_rule(raw: RawWindowsFirewallRule) -> FirewallRuleObservation:
     unsupported: set[FirewallRuleUnsupportedFeature] = set()
+    provenance: set[FirewallUnmodeledPlatformProvenance] = set()
     protocol, protocol_unsupported = _protocol(raw.protocol)
     if protocol_unsupported:
         unsupported.add(FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE)
@@ -375,6 +377,24 @@ def _normalize_rule(raw: RawWindowsFirewallRule) -> FirewallRuleObservation:
             unsupported.add(FirewallRuleUnsupportedFeature.USER_OR_PACKAGE_SCOPE)
         else:
             unsupported.add(FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE)
+        origin = {
+            WindowsRawFirewallUnsupportedFeature.RECOVERED_LOCAL_PORTS:
+                FirewallUnmodeledPlatformProvenance.RECOVERED_LOCAL_PORTS,
+            WindowsRawFirewallUnsupportedFeature.RECOVERED_REMOTE_PORTS:
+                FirewallUnmodeledPlatformProvenance.RECOVERED_REMOTE_PORTS,
+            WindowsRawFirewallUnsupportedFeature.RULE2_UNAVAILABLE:
+                FirewallUnmodeledPlatformProvenance.RULE2_UNAVAILABLE,
+            WindowsRawFirewallUnsupportedFeature.RULE3_UNAVAILABLE:
+                FirewallUnmodeledPlatformProvenance.RULE3_UNAVAILABLE,
+            WindowsRawFirewallUnsupportedFeature.REMOTE_PRINCIPAL_OR_SECURE_SCOPE:
+                FirewallUnmodeledPlatformProvenance.REMOTE_PRINCIPAL_OR_SECURE_SCOPE,
+            WindowsRawFirewallUnsupportedFeature.EDGE_TRAVERSAL_DEFERRED:
+                FirewallUnmodeledPlatformProvenance.EDGE_TRAVERSAL_DEFERRED,
+            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE:
+                FirewallUnmodeledPlatformProvenance.OTHER_CLOSED_ORIGIN,
+        }.get(feature)
+        if origin is not None:
+            provenance.add(origin)
     application = _application(raw, unsupported)
     interface = _interface(raw, unsupported)
     enabled = (
@@ -411,7 +431,13 @@ def _normalize_rule(raw: RawWindowsFirewallRule) -> FirewallRuleObservation:
         "unsupported_features": tuple(sorted(unsupported, key=lambda item: item.value)),
     }
     semantic_rule_id = semantic_firewall_rule_id(**values)
-    return FirewallRuleObservation(semantic_rule_id, **values)
+    return FirewallRuleObservation(
+        semantic_rule_id,
+        **values,
+        unmodeled_platform_provenance=tuple(sorted(
+            provenance, key=lambda item: item.value
+        )),
+    )
 
 
 def normalize_windows_firewall_rules(

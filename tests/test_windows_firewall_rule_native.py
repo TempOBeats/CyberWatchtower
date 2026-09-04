@@ -318,7 +318,7 @@ class NativeFirewallCollectorPortableTests(unittest.TestCase):
                 rule = result.rules[0]
                 self.assertEqual(rule.local_ports, ())
                 self.assertIn(
-                    WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,
+                    WindowsRawFirewallUnsupportedFeature.RECOVERED_LOCAL_PORTS,
                     rule.unsupported_features,
                 )
                 self.assertNotIn(value, repr(rule))

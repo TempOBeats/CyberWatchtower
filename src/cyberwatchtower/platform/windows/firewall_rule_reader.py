@@ -220,7 +220,7 @@ def _read_rule(
             raise
         local_ports = ()
         unsupported.add(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+            WindowsRawFirewallUnsupportedFeature.RECOVERED_LOCAL_PORTS
         )
     try:
         remote_ports = _csv_bstr(
@@ -233,7 +233,7 @@ def _read_rule(
             raise
         remote_ports = ()
         unsupported.add(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+            WindowsRawFirewallUnsupportedFeature.RECOVERED_REMOTE_PORTS
         )
     local_addresses = _csv_bstr(
         base.get_local_addresses, WindowsFirewallPropertyGetter.LOCAL_ADDRESSES,
@@ -283,7 +283,7 @@ def _read_rule(
         edge_traversal = _edge_options(edge_options, unsupported)
     else:
         unsupported.add(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+            WindowsRawFirewallUnsupportedFeature.RULE2_UNAVAILABLE
         )
         edge_traversal = _strict_bool(_scalar(
             base.get_edge_traversal,
@@ -300,7 +300,7 @@ def _read_rule(
         _read_rule3_predicates(rule3, ledger, unsupported)
     else:
         unsupported.add(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+            WindowsRawFirewallUnsupportedFeature.RULE3_UNAVAILABLE
         )
 
     enabled_value = _strict_bool(enabled)
@@ -375,7 +375,7 @@ def _read_rule3_predicates(
     if remote_machines is not None or remote_users is not None \
             or _require_int(secure_flags) != 0:
         unsupported.add(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+            WindowsRawFirewallUnsupportedFeature.REMOTE_PRINCIPAL_OR_SECURE_SCOPE
         )
 
 
@@ -506,7 +506,7 @@ def _edge_options(
         WINDOWS_EDGE_TRAVERSAL_DEFER_TO_USER,
     }:
         unsupported.add(
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE
+            WindowsRawFirewallUnsupportedFeature.EDGE_TRAVERSAL_DEFERRED
         )
         return None
     raise WindowsComContractError(WindowsComFailureCategory.INVALID_RESULT)

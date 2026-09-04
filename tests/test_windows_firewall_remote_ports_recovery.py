@@ -15,11 +15,11 @@ from cyberwatchtower.platform.windows.firewall_com_contracts import (
     WindowsFirewallPropertyGetter,
 )
 from cyberwatchtower.platform.windows.firewall_rule_ipc import (
-    WindowsFirewallIpcV2Response,
-    decode_windows_firewall_ipc_v2_response,
-    encode_windows_firewall_ipc_v2_response,
-    windows_firewall_ipc_v2_rule_to_raw,
-    windows_firewall_raw_rule_to_ipc_v2,
+    WindowsFirewallIpcV3Response,
+    decode_windows_firewall_ipc_v3_response,
+    encode_windows_firewall_ipc_v3_response,
+    windows_firewall_ipc_v3_rule_to_raw,
+    windows_firewall_raw_rule_to_ipc_v3,
 )
 from cyberwatchtower.platform.windows.firewall_rule_models import (
     WindowsFirewallPolicyView,
@@ -75,7 +75,7 @@ class RemotePortsConservativeRecoveryTests(unittest.TestCase):
                 self.assertEqual(raw.local_ports, ("443",))
                 self.assertEqual(raw.remote_ports, ())
                 self.assertEqual(raw.unsupported_features, (
-                    WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,
+                    WindowsRawFirewallUnsupportedFeature.RECOVERED_REMOTE_PORTS,
                 ))
                 self.assertNotIn(value, repr(raw))
                 self.assertEqual(mock.freed.count(
@@ -101,12 +101,13 @@ class RemotePortsConservativeRecoveryTests(unittest.TestCase):
                 raw = result.rules[0]
                 self.assertEqual(raw.local_ports, expected_local)
                 self.assertEqual(raw.remote_ports, expected_remote)
-                recovered = local.endswith(",") or remote.endswith(",")
-                self.assertEqual(
-                    raw.unsupported_features,
-                    ((WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,)
-                     if recovered else ()),
-                )
+                expected_features = tuple(sorted((
+                    *((WindowsRawFirewallUnsupportedFeature.RECOVERED_LOCAL_PORTS,)
+                      if local.endswith(",") else ()),
+                    *((WindowsRawFirewallUnsupportedFeature.RECOVERED_REMOTE_PORTS,)
+                      if remote.endswith(",") else ()),
+                ), key=lambda item: item.value))
+                self.assertEqual(raw.unsupported_features, expected_features)
 
     def test_remote_recovery_remains_narrow(self):
         cases = (
@@ -137,7 +138,7 @@ class RemotePortsConservativeRecoveryTests(unittest.TestCase):
                 "1" for _ in range(MAX_VALUES_PER_CONDITION + 1)
             ))
 
-    def test_v2_normalization_identity_and_policy_are_conservative(self):
+    def test_v3_normalization_identity_and_policy_are_conservative(self):
         remote_result, _ = _collect_ports()
         remote_block_result, _ = _collect_ports(
             action=WindowsRawFirewallRuleAction.BLOCK
@@ -145,14 +146,14 @@ class RemotePortsConservativeRecoveryTests(unittest.TestCase):
         both_result, _ = _collect_ports(local_ports="443,")
         for result in (remote_result, remote_block_result, both_result):
             raw = result.rules[0]
-            wire = WindowsFirewallIpcV2Response(
-                "2", VIEW, WindowsFirewallRuleResultCode.COMPLETE,
-                (windows_firewall_raw_rule_to_ipc_v2(raw),),
+            wire = WindowsFirewallIpcV3Response(
+                "3", VIEW, WindowsFirewallRuleResultCode.COMPLETE,
+                (windows_firewall_raw_rule_to_ipc_v3(raw),),
             )
-            decoded = decode_windows_firewall_ipc_v2_response(
-                encode_windows_firewall_ipc_v2_response(wire)
+            decoded = decode_windows_firewall_ipc_v3_response(
+                encode_windows_firewall_ipc_v3_response(wire)
             )
-            parent_raw = windows_firewall_ipc_v2_rule_to_raw(decoded.rules[0])
+            parent_raw = windows_firewall_ipc_v3_rule_to_raw(decoded.rules[0])
             self.assertEqual(parent_raw, raw)
             self.assertNotIn("PRIVATE_REMOTE_PORT_CANARY", repr(parent_raw))
             neutral = _normalize(WindowsFirewallRuleCollectionResult(

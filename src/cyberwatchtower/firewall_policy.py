@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import ipaddress
@@ -18,6 +18,7 @@ MAX_CONDITIONS_PER_RULE = 64
 MAX_VALUES_PER_CONDITION = 256
 MAX_NORMALIZED_TOKEN = 256
 MAX_MATCHED_RULE_DIGESTS_PER_LISTENER = 16
+MAX_POLICY_DIAGNOSTIC_LISTENERS = 8_192
 _SHA256_HEX_LENGTH = 64
 
 
@@ -64,6 +65,49 @@ class FirewallConditionMatch(str, Enum):
     MATCH = "MATCH"
     NO_MATCH = "NO_MATCH"
     INDETERMINATE = "INDETERMINATE"
+
+
+class FirewallPolicyIndeterminateCause(str, Enum):
+    UNSUPPORTED_FEATURE = "UNSUPPORTED_FEATURE"
+    REMOTE_ADDRESS_UNCERTAINTY = "REMOTE_ADDRESS_UNCERTAINTY"
+    INTERFACE_UNCERTAINTY = "INTERFACE_UNCERTAINTY"
+    MISSING_APPLICATION_IDENTITY = "MISSING_APPLICATION_IDENTITY"
+    MISSING_SERVICE_IDENTITY = "MISSING_SERVICE_IDENTITY"
+    UNKNOWN_ENABLEMENT_OR_STATE = "UNKNOWN_ENABLEMENT_OR_STATE"
+    TYPED_RANGE_OR_PARSE_UNCERTAINTY = "TYPED_RANGE_OR_PARSE_UNCERTAINTY"
+    PROFILE_UNCERTAINTY = "PROFILE_UNCERTAINTY"
+    OTHER_CLOSED_INDETERMINATE = "OTHER_CLOSED_INDETERMINATE"
+
+
+class FirewallPolicyDiagnosticStatus(str, Enum):
+    COMPLETE = "COMPLETE"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+    INVALID_RESULT = "INVALID_RESULT"
+
+
+class FirewallUnsupportedFeatureDiagnosticSubtype(str, Enum):
+    REMOTE_ADDRESS_RESTRICTED = "REMOTE_ADDRESS_RESTRICTED"
+    REMOTE_PORT_RESTRICTED = "REMOTE_PORT_RESTRICTED"
+    USER_OR_PACKAGE_SCOPE = "USER_OR_PACKAGE_SCOPE"
+    UNMODELED_PLATFORM_PREDICATE = "UNMODELED_PLATFORM_PREDICATE"
+    PRECEDENCE_UNPROVEN = "PRECEDENCE_UNPROVEN"
+
+
+class FirewallRemoteUncertaintyShape(str, Enum):
+    LOCAL_SUBNET = "LOCAL_SUBNET"
+    EXPLICIT_RESTRICTION = "EXPLICIT_RESTRICTION"
+    MIXED_SUPPORTED_RESTRICTION = "MIXED_SUPPORTED_RESTRICTION"
+    OTHER_CLOSED_RESTRICTION = "OTHER_CLOSED_RESTRICTION"
+
+
+class FirewallUnmodeledPlatformProvenance(str, Enum):
+    RECOVERED_LOCAL_PORTS = "RECOVERED_LOCAL_PORTS"
+    RECOVERED_REMOTE_PORTS = "RECOVERED_REMOTE_PORTS"
+    RULE2_UNAVAILABLE = "RULE2_UNAVAILABLE"
+    RULE3_UNAVAILABLE = "RULE3_UNAVAILABLE"
+    REMOTE_PRINCIPAL_OR_SECURE_SCOPE = "REMOTE_PRINCIPAL_OR_SECURE_SCOPE"
+    EDGE_TRAVERSAL_DEFERRED = "EDGE_TRAVERSAL_DEFERRED"
+    OTHER_CLOSED_ORIGIN = "OTHER_CLOSED_ORIGIN"
 
 
 class AddressConditionKind(str, Enum):
@@ -263,6 +307,9 @@ class FirewallRuleObservation:
     interface: FirewallInterfaceCondition
     edge_traversal: bool | None = None
     unsupported_features: tuple[FirewallRuleUnsupportedFeature, ...] = ()
+    unmodeled_platform_provenance: tuple[
+        FirewallUnmodeledPlatformProvenance, ...
+    ] = field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         supplied_identity = _digest(
@@ -291,6 +338,15 @@ class FirewallRuleObservation:
             "unsupported features", self.unsupported_features,
             FirewallRuleUnsupportedFeature,
         )
+        self._validate_tuple(
+            "unmodeled platform provenance", self.unmodeled_platform_provenance,
+            FirewallUnmodeledPlatformProvenance,
+        )
+        if self.unmodeled_platform_provenance and (
+            FirewallRuleUnsupportedFeature.UNMODELED_PLATFORM_PREDICATE
+            not in self.unsupported_features
+        ):
+            raise ValueError("diagnostic provenance requires unmodeled semantics.")
         if not isinstance(self.application, FirewallApplicationCondition):
             raise TypeError("rule application condition is invalid.")
         if not isinstance(self.interface, FirewallInterfaceCondition):
@@ -470,6 +526,173 @@ class ListenerPolicyAssessment:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ListenerPolicyDiagnostic:
+    assessment: ListenerPolicyAssessment
+    causes: tuple[FirewallPolicyIndeterminateCause, ...]
+    unsupported_feature_subtypes: tuple[
+        FirewallUnsupportedFeatureDiagnosticSubtype, ...
+    ] = ()
+    remote_uncertainty_shapes: tuple[FirewallRemoteUncertaintyShape, ...] = ()
+    unmodeled_platform_provenance: tuple[
+        FirewallUnmodeledPlatformProvenance, ...
+    ] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.assessment, ListenerPolicyAssessment):
+            raise TypeError("diagnostic assessment must use the typed contract.")
+        if not isinstance(self.causes, tuple) or not all(
+            isinstance(value, FirewallPolicyIndeterminateCause)
+            for value in self.causes
+        ):
+            raise TypeError("diagnostic causes must use a closed immutable tuple.")
+        if len(set(self.causes)) != len(self.causes) or tuple(sorted(
+            self.causes, key=lambda value: value.value
+        )) != self.causes:
+            raise ValueError("diagnostic causes must be unique and ordered.")
+        if self.assessment.applicability != FirewallRuleApplicability.INCOMPLETE \
+                and (self.causes or self.unsupported_feature_subtypes
+                     or self.remote_uncertainty_shapes
+                     or self.unmodeled_platform_provenance):
+            raise ValueError("only incomplete assessments may carry diagnostics.")
+        for name, values, expected in (
+            ("unsupported feature subtypes", self.unsupported_feature_subtypes,
+             FirewallUnsupportedFeatureDiagnosticSubtype),
+            ("remote uncertainty shapes", self.remote_uncertainty_shapes,
+             FirewallRemoteUncertaintyShape),
+            ("unmodeled platform provenance", self.unmodeled_platform_provenance,
+             FirewallUnmodeledPlatformProvenance),
+        ):
+            if not isinstance(values, tuple) or not all(
+                isinstance(value, expected) for value in values
+            ):
+                raise TypeError(f"diagnostic {name} must use a closed tuple.")
+            if len(set(values)) != len(values) or tuple(sorted(
+                values, key=lambda value: value.value
+            )) != values:
+                raise ValueError(f"diagnostic {name} must be unique and ordered.")
+        if self.unsupported_feature_subtypes and (
+            FirewallPolicyIndeterminateCause.UNSUPPORTED_FEATURE not in self.causes
+        ):
+            raise ValueError("unsupported subtypes require the closed cause.")
+        if self.remote_uncertainty_shapes and (
+            FirewallPolicyIndeterminateCause.REMOTE_ADDRESS_UNCERTAINTY
+            not in self.causes
+        ):
+            raise ValueError("remote shapes require the closed cause.")
+        if self.unmodeled_platform_provenance and (
+            FirewallPolicyIndeterminateCause.UNSUPPORTED_FEATURE not in self.causes
+        ):
+            raise ValueError("unmodeled provenance requires the closed cause.")
+
+
+@dataclass(frozen=True, slots=True)
+class FirewallPolicyDiagnosticSummary:
+    status: FirewallPolicyDiagnosticStatus
+    total_listener_assessments: int
+    incomplete_listener_assessments: int
+    category_counts: tuple[
+        tuple[FirewallPolicyIndeterminateCause, int], ...
+    ] = ()
+    unsupported_feature_subtype_listener_counts: tuple[
+        tuple[FirewallUnsupportedFeatureDiagnosticSubtype, int], ...
+    ] = ()
+    remote_uncertainty_shape_listener_counts: tuple[
+        tuple[FirewallRemoteUncertaintyShape, int], ...
+    ] = ()
+    unmodeled_platform_provenance_listener_counts: tuple[
+        tuple[FirewallUnmodeledPlatformProvenance, int], ...
+    ] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, FirewallPolicyDiagnosticStatus):
+            raise TypeError("diagnostic status must use the closed enum.")
+        for value in (
+            self.total_listener_assessments,
+            self.incomplete_listener_assessments,
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("diagnostic listener counts must be non-negative.")
+        if self.incomplete_listener_assessments > self.total_listener_assessments:
+            raise ValueError("incomplete diagnostics cannot exceed the total.")
+        if self.total_listener_assessments > MAX_POLICY_DIAGNOSTIC_LISTENERS:
+            raise ValueError("diagnostic listener count exceeds the bound.")
+        for name, values, expected in (
+            ("category counts", self.category_counts,
+             FirewallPolicyIndeterminateCause),
+            ("unsupported subtype counts",
+             self.unsupported_feature_subtype_listener_counts,
+             FirewallUnsupportedFeatureDiagnosticSubtype),
+            ("remote shape counts", self.remote_uncertainty_shape_listener_counts,
+             FirewallRemoteUncertaintyShape),
+            ("unmodeled provenance counts",
+             self.unmodeled_platform_provenance_listener_counts,
+             FirewallUnmodeledPlatformProvenance),
+        ):
+            if not isinstance(values, tuple) or not all(
+                isinstance(item, tuple) and len(item) == 2
+                and isinstance(item[0], expected)
+                and isinstance(item[1], int) and not isinstance(item[1], bool)
+                and 0 < item[1] <= self.incomplete_listener_assessments
+                for item in values
+            ):
+                raise TypeError(f"diagnostic {name} must be closed and bounded.")
+            keys = tuple(item[0] for item in values)
+            if len(set(keys)) != len(keys) or tuple(sorted(
+                values, key=lambda item: item[0].value
+            )) != values:
+                raise ValueError(f"diagnostic {name} must be unique and ordered.")
+        categories = dict(self.category_counts)
+        if self.unsupported_feature_subtype_listener_counts and (
+            FirewallPolicyIndeterminateCause.UNSUPPORTED_FEATURE not in categories
+        ):
+            raise ValueError("unsupported subtype counts require the closed cause.")
+        if self.remote_uncertainty_shape_listener_counts and (
+            FirewallPolicyIndeterminateCause.REMOTE_ADDRESS_UNCERTAINTY
+            not in categories
+        ):
+            raise ValueError("remote shape counts require the closed cause.")
+        if self.unmodeled_platform_provenance_listener_counts and (
+            FirewallPolicyIndeterminateCause.UNSUPPORTED_FEATURE not in categories
+        ):
+            raise ValueError("unmodeled provenance counts require the closed cause.")
+        if self.status != FirewallPolicyDiagnosticStatus.COMPLETE and (
+            self.total_listener_assessments
+            or self.incomplete_listener_assessments
+            or self.category_counts
+            or self.unsupported_feature_subtype_listener_counts
+            or self.remote_uncertainty_shape_listener_counts
+            or self.unmodeled_platform_provenance_listener_counts
+        ):
+            raise ValueError("failed diagnostics cannot carry partial output.")
+
+    def to_safe_mapping(self) -> dict[str, object]:
+        return {
+            "status": self.status.value,
+            "total_listener_assessments": self.total_listener_assessments,
+            "incomplete_listener_assessments": (
+                self.incomplete_listener_assessments
+            ),
+            "category_counts": {
+                category.value: count for category, count in self.category_counts
+            },
+            "unsupported_feature_subtype_listener_counts": {
+                subtype.value: count
+                for subtype, count
+                in self.unsupported_feature_subtype_listener_counts
+            },
+            "remote_uncertainty_shape_listener_counts": {
+                shape.value: count
+                for shape, count in self.remote_uncertainty_shape_listener_counts
+            },
+            "unmodeled_platform_provenance_listener_counts": {
+                origin.value: count
+                for origin, count
+                in self.unmodeled_platform_provenance_listener_counts
+            },
+        }
+
+
 def semantic_firewall_rule_id(
     *, technology: FirewallPlatformTechnology, enabled: FirewallRuleEnabledState,
     direction: FirewallRuleDirection, action: FirewallRuleAction,
@@ -537,25 +760,61 @@ def _address_matches(
             else FirewallConditionMatch.NO_MATCH)
 
 
-def _rule_match(
+def _remote_uncertainty_shapes(
+    conditions: tuple[FirewallAddressCondition, ...],
+) -> tuple[FirewallRemoteUncertaintyShape, ...]:
+    non_any = tuple(
+        condition for condition in conditions
+        if condition.kind != AddressConditionKind.ANY
+    )
+    has_local_subnet = any(
+        condition.kind == AddressConditionKind.SUPPORTED_SPECIAL_SCOPE
+        and condition.value == FirewallSpecialAddressScope.LOCAL_SUBNET.value
+        for condition in non_any
+    )
+    has_explicit = any(condition.kind in {
+        AddressConditionKind.EXACT,
+        AddressConditionKind.CIDR,
+        AddressConditionKind.IPV4_RANGE,
+        AddressConditionKind.IPV6_RANGE,
+    } for condition in non_any)
+    if has_local_subnet and has_explicit:
+        return (FirewallRemoteUncertaintyShape.MIXED_SUPPORTED_RESTRICTION,)
+    if has_local_subnet:
+        return (FirewallRemoteUncertaintyShape.LOCAL_SUBNET,)
+    if has_explicit:
+        return (FirewallRemoteUncertaintyShape.EXPLICIT_RESTRICTION,)
+    return (FirewallRemoteUncertaintyShape.OTHER_CLOSED_RESTRICTION,)
+
+
+def _rule_match_diagnostic_details(
     rule: FirewallRuleObservation, subject: ListenerPolicySubject
-) -> FirewallRuleMatch | None:
+) -> tuple[
+    FirewallRuleMatch | None,
+    tuple[FirewallPolicyIndeterminateCause, ...],
+    tuple[FirewallUnsupportedFeatureDiagnosticSubtype, ...],
+    tuple[FirewallRemoteUncertaintyShape, ...],
+    tuple[FirewallUnmodeledPlatformProvenance, ...],
+]:
     if rule.enabled == FirewallRuleEnabledState.DISABLED \
             or rule.direction != FirewallRuleDirection.INBOUND:
-        return None
-    indeterminate = rule.enabled == FirewallRuleEnabledState.UNKNOWN \
-        or bool(rule.unsupported_features)
+        return None, (), (), (), ()
+    causes: set[FirewallPolicyIndeterminateCause] = set()
+    if rule.enabled == FirewallRuleEnabledState.UNKNOWN:
+        causes.add(FirewallPolicyIndeterminateCause.UNKNOWN_ENABLEMENT_OR_STATE)
+    if rule.unsupported_features:
+        causes.add(FirewallPolicyIndeterminateCause.UNSUPPORTED_FEATURE)
     if rule.profiles:
         if not subject.profiles:
-            indeterminate = True
+            causes.add(FirewallPolicyIndeterminateCause.PROFILE_UNCERTAINTY)
         elif set(rule.profiles).isdisjoint(subject.profiles):
-            return None
+            return None, (), (), (), ()
     if rule.protocol is not None and rule.protocol != subject.protocol:
-        return None
+        return None, (), (), (), ()
     if rule.local_ports and not any(
         value.start <= subject.local_port <= value.end for value in rule.local_ports
     ):
-        return None
+        return None, (), (), (), ()
     if rule.local_addresses:
         address_matches = tuple(
             _address_matches(value, subject.local_address)
@@ -563,44 +822,79 @@ def _rule_match(
         )
         if FirewallConditionMatch.MATCH not in address_matches:
             if FirewallConditionMatch.INDETERMINATE in address_matches:
-                indeterminate = True
+                causes.add(
+                    FirewallPolicyIndeterminateCause.
+                    TYPED_RANGE_OR_PARSE_UNCERTAINTY
+                )
             else:
-                return None
+                return None, (), (), (), ()
     application = rule.application
     if application.kind == ApplicationConditionKind.APPLICATION_DIGEST:
         if subject.application_digest is None:
-            indeterminate = True
+            causes.add(
+                FirewallPolicyIndeterminateCause.MISSING_APPLICATION_IDENTITY
+            )
         elif application.value != subject.application_digest:
-            return None
+            return None, (), (), (), ()
     elif application.kind == ApplicationConditionKind.SERVICE_IDENTITY:
         if subject.service_identity is None:
-            indeterminate = True
+            causes.add(FirewallPolicyIndeterminateCause.MISSING_SERVICE_IDENTITY)
         elif application.value.casefold() != subject.service_identity.casefold():
-            return None
+            return None, (), (), (), ()
     interface = rule.interface
     if interface.kind == InterfaceConditionKind.INTERFACE_DIGEST:
         if subject.interface_digest is None:
-            indeterminate = True
+            causes.add(FirewallPolicyIndeterminateCause.INTERFACE_UNCERTAINTY)
         elif interface.value != subject.interface_digest:
-            return None
+            return None, (), (), (), ()
     elif interface.kind != InterfaceConditionKind.ANY:
         if subject.interface is None:
-            indeterminate = True
+            causes.add(FirewallPolicyIndeterminateCause.INTERFACE_UNCERTAINTY)
         elif interface.kind != subject.interface:
-            return None
+            return None, (), (), (), ()
     remote_is_any = not rule.remote_addresses or all(
         value.kind == AddressConditionKind.ANY for value in rule.remote_addresses
     )
     if not remote_is_any:
-        indeterminate = True
+        causes.add(FirewallPolicyIndeterminateCause.REMOTE_ADDRESS_UNCERTAINTY)
+    indeterminate = bool(causes)
     condition = (
         FirewallConditionMatch.INDETERMINATE
         if indeterminate else FirewallConditionMatch.MATCH
     )
-    return FirewallRuleMatch(
+    match = FirewallRuleMatch(
         rule.semantic_rule_id, rule.action, condition,
         condition == FirewallConditionMatch.MATCH and remote_is_any,
     )
+    unsupported_subtypes = tuple(sorted((
+        FirewallUnsupportedFeatureDiagnosticSubtype(feature.value)
+        for feature in rule.unsupported_features
+    ), key=lambda value: value.value))
+    remote_shapes = (
+        _remote_uncertainty_shapes(rule.remote_addresses)
+        if not remote_is_any else ()
+    )
+    return (
+        match,
+        tuple(sorted(causes, key=lambda value: value.value)),
+        unsupported_subtypes,
+        remote_shapes,
+        rule.unmodeled_platform_provenance,
+    )
+
+
+def _rule_match_with_diagnostics(
+    rule: FirewallRuleObservation, subject: ListenerPolicySubject
+) -> tuple[FirewallRuleMatch | None, tuple[FirewallPolicyIndeterminateCause, ...]]:
+    match, causes, _, _, _ = _rule_match_diagnostic_details(rule, subject)
+    return match, causes
+
+
+def _rule_match(
+    rule: FirewallRuleObservation, subject: ListenerPolicySubject
+) -> FirewallRuleMatch | None:
+    match, _ = _rule_match_with_diagnostics(rule, subject)
+    return match
 
 
 def evaluate_listener_policy(
@@ -687,6 +981,110 @@ def evaluate_listener_policy(
     return ListenerPolicyAssessment(
         applicability, default_policy_context, matches, basis, collection_coverage,
         applicability_coverage,
+    )
+
+
+def diagnose_listener_policy(
+    subject: ListenerPolicySubject,
+    rules: tuple[FirewallRuleObservation, ...],
+    collection_coverage: CoverageState,
+    default_policy_context: FirewallDefaultPolicyContext = (
+        FirewallDefaultPolicyContext.UNKNOWN
+    ),
+) -> ListenerPolicyDiagnostic:
+    """Return the frozen assessment plus privacy-safe indeterminate causes."""
+
+    assessment = evaluate_listener_policy(
+        subject, rules, collection_coverage, default_policy_context
+    )
+    if assessment.applicability != FirewallRuleApplicability.INCOMPLETE \
+            or collection_coverage != CoverageState.COMPLETE:
+        return ListenerPolicyDiagnostic(assessment, ())
+    causes: set[FirewallPolicyIndeterminateCause] = set()
+    unsupported_subtypes: set[FirewallUnsupportedFeatureDiagnosticSubtype] = set()
+    remote_shapes: set[FirewallRemoteUncertaintyShape] = set()
+    provenance: set[FirewallUnmodeledPlatformProvenance] = set()
+    for rule in rules:
+        match, match_causes, match_subtypes, match_remote_shapes, match_provenance = (
+            _rule_match_diagnostic_details(rule, subject)
+        )
+        if match is not None \
+                and match.condition_match == FirewallConditionMatch.INDETERMINATE:
+            causes.update(match_causes)
+            unsupported_subtypes.update(match_subtypes)
+            remote_shapes.update(match_remote_shapes)
+            provenance.update(match_provenance)
+    if not causes and any(
+        match.condition_match == FirewallConditionMatch.INDETERMINATE
+        for match in assessment.matches
+    ):
+        causes.add(FirewallPolicyIndeterminateCause.OTHER_CLOSED_INDETERMINATE)
+    return ListenerPolicyDiagnostic(
+        assessment,
+        tuple(sorted(causes, key=lambda value: value.value)),
+        tuple(sorted(unsupported_subtypes, key=lambda value: value.value)),
+        tuple(sorted(remote_shapes, key=lambda value: value.value)),
+        tuple(sorted(provenance, key=lambda value: value.value)),
+    )
+
+
+def aggregate_listener_policy_diagnostics(
+    diagnostics: tuple[ListenerPolicyDiagnostic, ...],
+) -> FirewallPolicyDiagnosticSummary:
+    """Aggregate closed per-listener causes without retaining identities."""
+
+    if not isinstance(diagnostics, tuple) or not all(
+        isinstance(value, ListenerPolicyDiagnostic) for value in diagnostics
+    ):
+        return FirewallPolicyDiagnosticSummary(
+            FirewallPolicyDiagnosticStatus.INVALID_RESULT, 0, 0
+        )
+    if len(diagnostics) > MAX_POLICY_DIAGNOSTIC_LISTENERS:
+        return FirewallPolicyDiagnosticSummary(
+            FirewallPolicyDiagnosticStatus.LIMIT_EXCEEDED, 0, 0
+        )
+    incomplete = tuple(
+        value for value in diagnostics
+        if value.assessment.applicability == FirewallRuleApplicability.INCOMPLETE
+    )
+    counts = tuple(sorted((
+        (category, sum(category in value.causes for value in incomplete))
+        for category in FirewallPolicyIndeterminateCause
+        if any(category in value.causes for value in incomplete)
+    ), key=lambda item: item[0].value))
+    unsupported_counts = tuple(sorted((
+        (subtype, sum(
+            subtype in value.unsupported_feature_subtypes for value in incomplete
+        ))
+        for subtype in FirewallUnsupportedFeatureDiagnosticSubtype
+        if any(
+            subtype in value.unsupported_feature_subtypes for value in incomplete
+        )
+    ), key=lambda item: item[0].value))
+    remote_counts = tuple(sorted((
+        (shape, sum(
+            shape in value.remote_uncertainty_shapes for value in incomplete
+        ))
+        for shape in FirewallRemoteUncertaintyShape
+        if any(shape in value.remote_uncertainty_shapes for value in incomplete)
+    ), key=lambda item: item[0].value))
+    provenance_counts = tuple(sorted((
+        (origin, sum(
+            origin in value.unmodeled_platform_provenance for value in incomplete
+        ))
+        for origin in FirewallUnmodeledPlatformProvenance
+        if any(
+            origin in value.unmodeled_platform_provenance for value in incomplete
+        )
+    ), key=lambda item: item[0].value))
+    return FirewallPolicyDiagnosticSummary(
+        FirewallPolicyDiagnosticStatus.COMPLETE,
+        len(diagnostics),
+        len(incomplete),
+        counts,
+        unsupported_counts,
+        remote_counts,
+        provenance_counts,
     )
 
 

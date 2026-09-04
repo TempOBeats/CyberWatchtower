@@ -45,11 +45,21 @@ from .firewall_rules import normalize_windows_firewall_rules
 
 WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION = "1"
 WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2 = "2"
+WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3 = "3"
 WINDOWS_FIREWALL_HELPER_TIMEOUT_MS = 15_000
 WINDOWS_FIREWALL_HELPER_TERMINATION_GRACE_MS = 1_000
 MAX_WINDOWS_FIREWALL_IPC_REQUEST_BYTES = 256
 MAX_WINDOWS_FIREWALL_IPC_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_WINDOWS_FIREWALL_IPC_JSON_DEPTH = 6
+
+
+_WINDOWS_FIREWALL_IPC_V2_UNSUPPORTED_FEATURES = frozenset({
+    WindowsRawFirewallUnsupportedFeature.ICMP_TYPE_CONDITION,
+    WindowsRawFirewallUnsupportedFeature.LOCAL_USER_SCOPE,
+    WindowsRawFirewallUnsupportedFeature.PACKAGE_SCOPE,
+    WindowsRawFirewallUnsupportedFeature.DYNAMIC_KEYWORD_ADDRESS,
+    WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,
+})
 
 
 class WindowsFirewallIpcOperation(str, Enum):
@@ -279,6 +289,20 @@ class WindowsFirewallIpcV2Request:
 
 
 @dataclass(frozen=True, slots=True)
+class WindowsFirewallIpcV3Request:
+    protocol_version: str = WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3
+    operation: WindowsFirewallIpcOperation = (
+        WindowsFirewallIpcOperation.COLLECT_CURRENT_POLICY
+    )
+
+    def __post_init__(self) -> None:
+        if self.protocol_version != WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3:
+            raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
+        if not isinstance(self.operation, WindowsFirewallIpcOperation):
+            raise TypeError("v3 helper operation must use the closed enum.")
+
+
+@dataclass(frozen=True, slots=True)
 class WindowsFirewallIpcV2Rule:
     enabled: bool
     direction: WindowsRawFirewallRuleDirection
@@ -321,6 +345,10 @@ class WindowsFirewallIpcV2Rule:
             "unsupported_features",
         ):
             object.__setattr__(self, name, getattr(validated, name))
+        if not set(self.unsupported_features).issubset(
+            _WINDOWS_FIREWALL_IPC_V2_UNSUPPORTED_FEATURES
+        ):
+            raise ValueError("v2 rule contains a feature outside its frozen enum.")
         for name in ("local_addresses", "remote_addresses"):
             values = getattr(self, name)
             if not isinstance(values, tuple) or not all(
@@ -361,6 +389,80 @@ class WindowsFirewallIpcV2Response:
             raise ValueError("v2 response exceeds the rule bound.")
         if self.result != WindowsFirewallRuleResultCode.COMPLETE and self.rules:
             raise ValueError("failed v2 response cannot retain raw rules.")
+
+
+@dataclass(frozen=True, slots=True)
+class WindowsFirewallIpcV3Rule:
+    enabled: bool
+    direction: WindowsRawFirewallRuleDirection
+    action: WindowsRawFirewallRuleAction
+    profile_mask: int
+    protocol: int
+    local_ports: tuple[str, ...] = ()
+    remote_ports: tuple[str, ...] = ()
+    local_addresses: tuple[WindowsFirewallIpcV2Address, ...] = ()
+    remote_addresses: tuple[WindowsFirewallIpcV2Address, ...] = ()
+    application_path: RawWindowsApplicationPath | None = None
+    service_name: str | None = None
+    interface_types: tuple[WindowsRawFirewallInterfaceType, ...] = ()
+    interfaces: tuple[RawWindowsInterfaceIdentity, ...] = ()
+    edge_traversal: bool | None = None
+    unsupported_features: tuple[WindowsRawFirewallUnsupportedFeature, ...] = ()
+
+    def __post_init__(self) -> None:
+        validated = RawWindowsFirewallRule(
+            WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+            self.enabled, self.direction, self.action, self.profile_mask,
+            self.protocol, self.local_ports, self.remote_ports, (), (),
+            self.application_path, self.service_name, self.interface_types,
+            self.interfaces, self.edge_traversal, self.unsupported_features,
+        )
+        for name in (
+            "local_ports", "remote_ports", "application_path", "service_name",
+            "interface_types", "interfaces", "edge_traversal",
+            "unsupported_features",
+        ):
+            object.__setattr__(self, name, getattr(validated, name))
+        for name in ("local_addresses", "remote_addresses"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or not all(
+                isinstance(value, WindowsFirewallIpcV2Address) for value in values
+            ):
+                raise TypeError("v3 addresses must use an immutable closed tuple.")
+            if len(values) > MAX_VALUES_PER_CONDITION:
+                raise ValueError("v3 address condition exceeds the value bound.")
+            if len(set(values)) != len(values):
+                raise ValueError("v3 address condition cannot contain duplicates.")
+            if any(value.kind == WindowsFirewallIpcV2AddressKind.ANY for value in values) \
+                    and len(values) != 1:
+                raise ValueError("v3 ANY cannot be combined with explicit addresses.")
+            object.__setattr__(self, name, tuple(sorted(
+                values, key=_v2_address_sort_key
+            )))
+
+
+@dataclass(frozen=True, slots=True)
+class WindowsFirewallIpcV3Response:
+    protocol_version: str
+    authority: WindowsFirewallPolicyView
+    result: WindowsFirewallRuleResultCode
+    rules: tuple[WindowsFirewallIpcV3Rule, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.protocol_version != WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3:
+            raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
+        if self.authority != WindowsFirewallPolicyView.CURRENT_POLICY_VIEW:
+            raise ValueError("v3 helper authority must remain current-policy view.")
+        if not isinstance(self.result, WindowsFirewallRuleResultCode):
+            raise TypeError("v3 result must use the closed result enum.")
+        if not isinstance(self.rules, tuple) or not all(
+            isinstance(rule, WindowsFirewallIpcV3Rule) for rule in self.rules
+        ):
+            raise TypeError("v3 response rules must use an immutable closed tuple.")
+        if len(self.rules) > MAX_FIREWALL_RULES:
+            raise ValueError("v3 response exceeds the rule bound.")
+        if self.result != WindowsFirewallRuleResultCode.COMPLETE and self.rules:
+            raise ValueError("failed v3 response cannot retain raw rules.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -614,6 +716,80 @@ def decode_windows_firewall_ipc_v2_response(
         ) from None
 
 
+def encode_windows_firewall_ipc_v3_request(
+    request: WindowsFirewallIpcV3Request,
+) -> WindowsFirewallIpcPayload:
+    if not isinstance(request, WindowsFirewallIpcV3Request):
+        raise TypeError("v3 request encoder requires the closed v3 contract.")
+    return _payload_v2(
+        WindowsFirewallIpcPayloadKind.REQUEST,
+        {
+            "operation": request.operation.value,
+            "protocol_version": request.protocol_version,
+        },
+    )
+
+
+def decode_windows_firewall_ipc_v3_request(
+    payload: WindowsFirewallIpcPayload,
+) -> WindowsFirewallIpcV3Request:
+    value = _decode_payload(payload, WindowsFirewallIpcPayloadKind.REQUEST)
+    _exact_fields(value, {"operation", "protocol_version"})
+    _require_protocol_version(value["protocol_version"],
+                              WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3)
+    try:
+        return WindowsFirewallIpcV3Request(
+            value["protocol_version"], WindowsFirewallIpcOperation(value["operation"])
+        )
+    except WindowsComContractError:
+        raise
+    except (TypeError, ValueError):
+        raise WindowsComContractError(
+            WindowsComFailureCategory.INVALID_RESULT
+        ) from None
+
+
+def encode_windows_firewall_ipc_v3_response(
+    response: WindowsFirewallIpcV3Response,
+) -> WindowsFirewallIpcPayload:
+    if not isinstance(response, WindowsFirewallIpcV3Response):
+        raise TypeError("v3 response encoder requires the closed v3 contract.")
+    return _payload_v2(
+        WindowsFirewallIpcPayloadKind.RESPONSE,
+        {
+            "authority": response.authority.value,
+            "protocol_version": response.protocol_version,
+            "result": response.result.value,
+            "rules": [_encode_v3_rule(rule) for rule in response.rules],
+        },
+    )
+
+
+def decode_windows_firewall_ipc_v3_response(
+    payload: WindowsFirewallIpcPayload,
+) -> WindowsFirewallIpcV3Response:
+    value = _decode_payload(payload, WindowsFirewallIpcPayloadKind.RESPONSE)
+    _exact_fields(value, {"authority", "protocol_version", "result", "rules"})
+    _require_protocol_version(value["protocol_version"],
+                              WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3)
+    try:
+        authority = WindowsFirewallPolicyView(value["authority"])
+        result = WindowsFirewallRuleResultCode(value["result"])
+        encoded_rules = value["rules"]
+        if not isinstance(encoded_rules, list) or len(encoded_rules) > MAX_FIREWALL_RULES:
+            raise ValueError
+        rules = tuple(_decode_v3_rule(item) for item in encoded_rules)
+        return WindowsFirewallIpcV3Response(
+            value["protocol_version"], authority, result, rules
+        )
+    except WindowsComContractError:
+        raise
+    except (KeyError, TypeError, ValueError):
+        raise WindowsComContractError(
+            WindowsComFailureCategory.INVALID_RESULT
+        ) from None
+
+
 def _require_protocol_version(value: object, expected: str) -> None:
     if not isinstance(value, str):
         raise WindowsComContractError(WindowsComFailureCategory.INVALID_RESULT)
@@ -624,25 +800,29 @@ def _require_protocol_version(value: object, expected: str) -> None:
 def decode_windows_firewall_ipc_request_for_version(
     payload: WindowsFirewallIpcPayload,
     expected_version: str,
-) -> WindowsFirewallHelperRequest | WindowsFirewallIpcV2Request:
-    """Strict portable dispatch; production continues calling the v1 decoder."""
+) -> WindowsFirewallHelperRequest | WindowsFirewallIpcV2Request | WindowsFirewallIpcV3Request:
+    """Strict portable dispatch; callers select one exact protocol."""
 
     _require_supported_protocol_version(expected_version)
     if expected_version == WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION:
         return decode_windows_firewall_helper_request(payload)
-    return decode_windows_firewall_ipc_v2_request(payload)
+    if expected_version == WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2:
+        return decode_windows_firewall_ipc_v2_request(payload)
+    return decode_windows_firewall_ipc_v3_request(payload)
 
 
 def decode_windows_firewall_ipc_response_for_version(
     payload: WindowsFirewallIpcPayload,
     expected_version: str,
-) -> WindowsFirewallHelperResponse | WindowsFirewallIpcV2Response:
+) -> WindowsFirewallHelperResponse | WindowsFirewallIpcV2Response | WindowsFirewallIpcV3Response:
     """Decode only the version requested; never sniff, retry, or downgrade."""
 
     _require_supported_protocol_version(expected_version)
     if expected_version == WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION:
         return decode_windows_firewall_helper_response(payload)
-    return decode_windows_firewall_ipc_v2_response(payload)
+    if expected_version == WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2:
+        return decode_windows_firewall_ipc_v2_response(payload)
+    return decode_windows_firewall_ipc_v3_response(payload)
 
 
 def _require_supported_protocol_version(value: object) -> None:
@@ -651,6 +831,7 @@ def _require_supported_protocol_version(value: object) -> None:
     if value not in {
         WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION,
         WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V2,
+        WINDOWS_FIREWALL_IPC_PROTOCOL_VERSION_V3,
     }:
         raise WindowsComContractError(WindowsComFailureCategory.UNSUPPORTED)
 
@@ -782,6 +963,67 @@ def windows_firewall_raw_rule_to_ipc_v2(
     )
 
 
+def windows_firewall_ipc_v3_rule_to_raw(
+    rule: WindowsFirewallIpcV3Rule,
+) -> RawWindowsFirewallRule:
+    if not isinstance(rule, WindowsFirewallIpcV3Rule):
+        raise TypeError("v3-to-raw conversion requires a validated v3 rule.")
+    return RawWindowsFirewallRule(
+        policy_view=WindowsFirewallPolicyView.CURRENT_POLICY_VIEW,
+        enabled=rule.enabled,
+        direction=rule.direction,
+        action=rule.action,
+        profile_mask=rule.profile_mask,
+        protocol=rule.protocol,
+        local_ports=rule.local_ports,
+        remote_ports=rule.remote_ports,
+        local_addresses=tuple(
+            windows_firewall_ipc_v2_address_to_raw(value)
+            for value in rule.local_addresses
+        ),
+        remote_addresses=tuple(
+            windows_firewall_ipc_v2_address_to_raw(value)
+            for value in rule.remote_addresses
+        ),
+        application_path=rule.application_path,
+        service_name=rule.service_name,
+        interface_types=rule.interface_types,
+        interfaces=rule.interfaces,
+        edge_traversal=rule.edge_traversal,
+        unsupported_features=rule.unsupported_features,
+    )
+
+
+def windows_firewall_raw_rule_to_ipc_v3(
+    rule: RawWindowsFirewallRule,
+) -> WindowsFirewallIpcV3Rule:
+    if not isinstance(rule, RawWindowsFirewallRule):
+        raise TypeError("raw-to-v3 conversion requires a validated raw rule.")
+    return WindowsFirewallIpcV3Rule(
+        enabled=rule.enabled,
+        direction=rule.direction,
+        action=rule.action,
+        profile_mask=rule.profile_mask,
+        protocol=rule.protocol,
+        local_ports=rule.local_ports,
+        remote_ports=rule.remote_ports,
+        local_addresses=tuple(
+            windows_firewall_raw_address_to_ipc_v2(value)
+            for value in rule.local_addresses
+        ),
+        remote_addresses=tuple(
+            windows_firewall_raw_address_to_ipc_v2(value)
+            for value in rule.remote_addresses
+        ),
+        application_path=rule.application_path,
+        service_name=rule.service_name,
+        interface_types=rule.interface_types,
+        interfaces=rule.interfaces,
+        edge_traversal=rule.edge_traversal,
+        unsupported_features=rule.unsupported_features,
+    )
+
+
 def run_isolated_windows_firewall_helper(
     launcher: WindowsFirewallHelperLauncherProtocol,
     *,
@@ -796,8 +1038,8 @@ def run_isolated_windows_firewall_helper(
             or trace.events != (WindowsFirewallHelperLifecycleState.NOT_STARTED,):
         raise TypeError("helper lifecycle must be a fresh typed tracker.")
     try:
-        request = encode_windows_firewall_ipc_v2_request(
-            WindowsFirewallIpcV2Request()
+        request = encode_windows_firewall_ipc_v3_request(
+            WindowsFirewallIpcV3Request()
         )
         process = launcher.start(request)
         if not isinstance(process, WindowsFirewallHelperProcessProtocol):
@@ -832,7 +1074,7 @@ def run_isolated_windows_firewall_helper(
     primary: WindowsFirewallRuleResultCode | None = None
     response = None
     try:
-        response = decode_windows_firewall_ipc_v2_response(wait.payload)
+        response = decode_windows_firewall_ipc_v3_response(wait.payload)
     except WindowsComContractError as exc:
         primary = _result_code(exc.category)
         trace.transition(WindowsFirewallHelperLifecycleState.MALFORMED_RESPONSE)
@@ -849,7 +1091,7 @@ def run_isolated_windows_firewall_helper(
     return WindowsFirewallRuleCollectionResult(
         response.result,
         response.authority,
-        tuple(windows_firewall_ipc_v2_rule_to_raw(rule) for rule in response.rules),
+        tuple(windows_firewall_ipc_v3_rule_to_raw(rule) for rule in response.rules),
     )
 
 
@@ -1018,6 +1260,70 @@ def _decode_v2_rule(value: object) -> WindowsFirewallIpcV2Rule:
     if not isinstance(interfaces, list):
         raise ValueError
     return WindowsFirewallIpcV2Rule(
+        enabled=value["enabled"],
+        direction=WindowsRawFirewallRuleDirection(value["direction"]),
+        action=WindowsRawFirewallRuleAction(value["action"]),
+        profile_mask=value["profile_mask"],
+        protocol=value["protocol"],
+        local_ports=_text_tuple(value["local_ports"]),
+        remote_ports=_text_tuple(value["remote_ports"]),
+        local_addresses=_decode_v2_addresses(value["local_addresses"]),
+        remote_addresses=_decode_v2_addresses(value["remote_addresses"]),
+        application_path=(
+            RawWindowsApplicationPath(application) if application is not None else None
+        ),
+        service_name=value["service_name"],
+        interface_types=tuple(
+            WindowsRawFirewallInterfaceType(item)
+            for item in _text_tuple(value["interface_types"])
+        ),
+        interfaces=tuple(
+            RawWindowsInterfaceIdentity(item) for item in _text_tuple(interfaces)
+        ),
+        edge_traversal=value["edge_traversal"],
+        unsupported_features=tuple(
+            WindowsRawFirewallUnsupportedFeature(item)
+            for item in _text_tuple(value["unsupported_features"])
+        ),
+    )
+
+
+def _encode_v3_rule(rule: WindowsFirewallIpcV3Rule) -> dict[str, object]:
+    return {
+        "action": rule.action.value,
+        "application_path": (
+            rule.application_path.consume_for_normalization()
+            if rule.application_path is not None else None
+        ),
+        "direction": rule.direction.value,
+        "edge_traversal": rule.edge_traversal,
+        "enabled": rule.enabled,
+        "interface_types": [value.value for value in rule.interface_types],
+        "interfaces": [value.consume_for_normalization() for value in rule.interfaces],
+        "local_addresses": [_encode_v2_address(value)
+                            for value in rule.local_addresses],
+        "local_ports": list(rule.local_ports),
+        "profile_mask": rule.profile_mask,
+        "protocol": rule.protocol,
+        "remote_addresses": [_encode_v2_address(value)
+                             for value in rule.remote_addresses],
+        "remote_ports": list(rule.remote_ports),
+        "service_name": rule.service_name,
+        "unsupported_features": [
+            value.value for value in rule.unsupported_features
+        ],
+    }
+
+
+def _decode_v3_rule(value: object) -> WindowsFirewallIpcV3Rule:
+    _exact_fields(value, _RULE_FIELDS)
+    application = value["application_path"]
+    interfaces = value["interfaces"]
+    if application is not None and not isinstance(application, str):
+        raise ValueError
+    if not isinstance(interfaces, list):
+        raise ValueError
+    return WindowsFirewallIpcV3Rule(
         enabled=value["enabled"],
         direction=WindowsRawFirewallRuleDirection(value["direction"]),
         action=WindowsRawFirewallRuleAction(value["action"]),

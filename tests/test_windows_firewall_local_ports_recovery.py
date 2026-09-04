@@ -10,11 +10,11 @@ from cyberwatchtower.firewall_policy import (
 )
 from cyberwatchtower.platform.models import BindExposure, FirewallProfile, NetworkProtocol
 from cyberwatchtower.platform.windows.firewall_rule_ipc import (
-    WindowsFirewallIpcV2Response,
-    decode_windows_firewall_ipc_v2_response,
-    encode_windows_firewall_ipc_v2_response,
-    windows_firewall_ipc_v2_rule_to_raw,
-    windows_firewall_raw_rule_to_ipc_v2,
+    WindowsFirewallIpcV3Response,
+    decode_windows_firewall_ipc_v3_response,
+    encode_windows_firewall_ipc_v3_response,
+    windows_firewall_ipc_v3_rule_to_raw,
+    windows_firewall_raw_rule_to_ipc_v3,
 )
 from cyberwatchtower.platform.windows.firewall_rule_models import (
     WindowsFirewallPolicyView,
@@ -58,20 +58,20 @@ def _normalize(result):
 
 
 class LocalPortsConservativeRecoveryTests(unittest.TestCase):
-    def test_recovered_rule_survives_v2_round_trip_without_private_text(self):
+    def test_recovered_rule_survives_v3_round_trip_without_private_text(self):
         result, _ = _collect_recovered()
         raw = result.rules[0]
-        wire = WindowsFirewallIpcV2Response(
-            "2", VIEW, WindowsFirewallRuleResultCode.COMPLETE,
-            (windows_firewall_raw_rule_to_ipc_v2(raw),),
+        wire = WindowsFirewallIpcV3Response(
+            "3", VIEW, WindowsFirewallRuleResultCode.COMPLETE,
+            (windows_firewall_raw_rule_to_ipc_v3(raw),),
         )
-        decoded = decode_windows_firewall_ipc_v2_response(
-            encode_windows_firewall_ipc_v2_response(wire)
+        decoded = decode_windows_firewall_ipc_v3_response(
+            encode_windows_firewall_ipc_v3_response(wire)
         )
-        parent_raw = windows_firewall_ipc_v2_rule_to_raw(decoded.rules[0])
+        parent_raw = windows_firewall_ipc_v3_rule_to_raw(decoded.rules[0])
         self.assertEqual(parent_raw.local_ports, ())
         self.assertEqual(parent_raw.unsupported_features, (
-            WindowsRawFirewallUnsupportedFeature.UNMODELED_NATIVE_PREDICATE,
+            WindowsRawFirewallUnsupportedFeature.RECOVERED_LOCAL_PORTS,
         ))
         self.assertNotIn("PRIVATE_PORT_CANARY", repr(parent_raw))
 
