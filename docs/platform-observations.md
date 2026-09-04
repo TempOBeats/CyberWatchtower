@@ -432,14 +432,66 @@ fail-closed. A completely enumerated collection may therefore remain
 explicitly unmodeled predicate could matter.
 
 Native collection remains `CURRENT_POLICY_VIEW`, not an effective-policy
-claim. It is not exposed through NativeWindowsApi or WindowsPlatformAdapter and
-cannot influence scanning, reachability, findings, reports, memory, scoring,
-Advisor, briefing, or providers. Collection is passive and performs no
+claim. The native rule collector is not exposed through `NativeWindowsApi`;
+later phases connect it to the Windows adapter through the isolated policy
+provider. Collection is passive and performs no
 firewall mutation, network probing, filesystem resolution, or active
 reachability inference. A guarded Windows validation test is skipped unless
 explicitly enabled; ordinary Phase 2B.6 verification does not run live COM or
 native firewall collection. Production security-decision routing is
-reserved for a later separately reviewed phase.
+introduced only by a later separately reviewed phase.
+
+### Windows Firewall applicability diagnostics and fixed IPC v3
+
+v0.5 Phase 2B.9 adds a bounded, aggregate-only diagnostic companion to the
+existing listener-policy matcher. Collection coverage and applicability
+coverage remain distinct: complete collection of the current Windows Firewall
+policy view does not imply that every rule can be applied completely to a
+passively observed listener. The diagnostic does not participate in firewall
+decisions, reports, memory, scoring, or finding identity.
+
+The production Windows Firewall helper now uses fixed IPC v3. Fixed IPC v2
+remains frozen and independently validated. Version 3 retains the same bounded
+structural architecture and atomically switches the parent and helper to an
+expanded closed unsupported-feature vocabulary. There is no protocol fallback,
+downgrade, or negotiation, and unknown enum values fail closed.
+
+IPC v3 preserves six closed native-reader provenance classes:
+
+- `RECOVERED_LOCAL_PORTS`
+- `RECOVERED_REMOTE_PORTS`
+- `RULE2_UNAVAILABLE`
+- `RULE3_UNAVAILABLE`
+- `REMOTE_PRINCIPAL_OR_SECURE_SCOPE`
+- `EDGE_TRAVERSAL_DEFERRED`
+
+The generic `UNMODELED_NATIVE_PREDICATE` catch-all remains available. These
+values are diagnostic provenance, not distinct firewall decision semantics.
+Every refined value and the catch-all continue to normalize conservatively to
+`UNMODELED_PLATFORM_PREDICATE` for security evaluation.
+
+One controlled Windows observation produced 77 listener assessments, all with
+incomplete applicability. All 77 carried remote-address uncertainty and
+user/package-scope uncertainty. Eleven carried recovered-local-port
+provenance, seven carried deferred-edge-traversal provenance, and the other
+four refined provenance categories were zero. These counts describe one host
+observation at one time; they are not a general expectation for Windows.
+
+A passive listener does not identify a future remote peer, so restrictive
+remote-address predicates can legitimately remain indeterminate. Likewise,
+user, package, and security predicates remain indeterminate when the listener
+subject lacks the principal or package evidence needed to evaluate them.
+`CURRENT_POLICY_VIEW` is the bounded rule authority used here, not a claim of
+effective merged enterprise policy. Firewall policy can establish only the
+existing potentially-reachable policy state; it does not prove actual network
+reachability or create `CONFIRMED_REACHABLE` evidence.
+
+`RECOVERED_LOCAL_PORTS` means the reader encountered the reviewed empty-element
+recovery case, discarded the malformed source representation, and retained
+conservative unsupported provenance. It does not reconstruct the intended port
+restriction. `EDGE_TRAVERSAL_DEFERRED` identifies edge-traversal semantics that
+require application, user, or network context absent from the passive listener
+subject. Both remain conservative, and Phase 2B.9 makes no matcher change.
 
 Future adapters must:
 
