@@ -1,9 +1,9 @@
 # CyberWatchtower
 
-CyberWatchtower is a Python-based defensive security assessment tool for Linux
-systems. It inventories host information, firewall tooling, and listening
-services, then produces findings, a security score, and local JSON report
-history.
+CyberWatchtower is a Python-based defensive security assessment tool for
+Windows and Linux systems. It inventories host information, firewall tooling,
+and listening services, then produces findings, a security score, and local
+JSON report history.
 
 CyberWatchtower is intended only for systems you own or are authorized to
 assess.
@@ -27,27 +27,57 @@ identifiers; final explanations and recommendations remain deterministic.
 ## Requirements
 
 - Python 3.11 or newer
-- Linux for firewall and socket inspection
-- `ss` from iproute2 for listening-service inspection
+- Windows or Linux; capabilities and validation depth differ by platform
+- On Linux, `ss` from iproute2 for listening-service inspection
 - Optional elevated privileges for complete process and firewall metadata
 
 The project intentionally uses only the Python standard library at runtime.
 
+## Platform support
+
+The currently supported and validated targets are Windows and Linux. Linux
+uses its own production adapter and depends on `ss`; its firewall inspection is
+less expressive than the Windows v0.5 current-policy listener-rule analysis.
+The two platforms therefore do not have identical feature coverage.
+
+macOS/Darwin is outside the current product scope and has no production
+adapter. The platform-neutral architecture remains extensible for a possible
+future implementation subject to explicit development work and real-system
+validation. Unsupported platforms fail closed rather than falling back to a
+Windows or Linux adapter.
+
 ## Installation
 
 Create a virtual environment and install the project in editable mode:
+
+Linux:
 
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e .
 ```
 
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -e .
+```
+
 ## Usage
 
 Run the installed command:
 
+Linux:
+
 ```bash
 .venv/bin/cyberwatchtower
+```
+
+Windows PowerShell:
+
+```powershell
+.venv\Scripts\cyberwatchtower.exe
 ```
 
 The command prints the assessment and saves a JSON report under `reports/`.

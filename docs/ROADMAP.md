@@ -8,10 +8,12 @@ approval.
 
 ## Product vision
 
-CyberWatchtower is evolving into a professional, cross-platform cybersecurity
-intelligence assistant for Linux, Windows, and macOS. It should help an operator
-understand current posture, meaningful changes, recurring problems, evidence,
-and carefully authorized defensive investigations.
+CyberWatchtower is evolving into a professional, multi-platform cybersecurity
+intelligence assistant. Windows and Linux are the current supported targets;
+capabilities and validation depth differ by platform. macOS/Darwin is outside
+the current product scope. The platform-neutral architecture remains extensible
+for a possible future implementation subject to explicit work and real-system
+validation.
 
 The permanent rule is: **deterministic security evidence remains
 authoritative**. AI may retrieve, organize, explain, and prioritize trusted
@@ -25,16 +27,16 @@ and cannot invent findings, grant approval, or modify a system.
 - **Preview candidate** — valuable for 1.0 if its trust and quality gates pass.
 - **Post-1.0** — intentionally deferred beyond the first professional release.
 
-## Current status: v0.4 validated on one real Windows 11 x64 host
+## Current status: Windows and Linux supported with differing validation depth
 
-CyberWatchtower is currently a Linux-validated deterministic security-intelligence
-CLI with optional local persistent memory. Its observation boundary is
-platform-neutral. The Windows adapter and deterministic scan path are
-implemented with portable fixtures and have completed read-only production
-validation on one Windows 11 x64 host. Windows support remains
-experimental/pre-release until validation covers a broader supported matrix.
-There is no macOS
-adapter, desktop GUI, external knowledge retrieval, production model
+CyberWatchtower is currently a Windows- and Linux-supported deterministic
+security-intelligence CLI with optional local persistent memory. Its observation
+boundary is platform-neutral. Linux runs in the current Ubuntu CI environment;
+the Windows adapter and deterministic scan path are implemented with portable
+fixtures and have completed controlled read-only production validation on a
+Windows 11 x64 host. This evidence does not imply feature parity or identical
+validation depth. There is no macOS/Darwin adapter, desktop GUI, external
+knowledge retrieval, production model
 adapter, honeypot runtime, executable investigation capability, fleet
 controller, or voice interface.
 
@@ -171,9 +173,11 @@ approved phase.
 closed applicability results, opaque application/interface identities, bounded
 rule acquisition, and no model- or title-derived policy conclusions.
 
-### v0.6 — macOS platform adapter
+### Future, out of current scope — possible macOS/Darwin platform adapter
 
-**Objective:** Add conservative macOS collection through the same contracts.
+This is not a current release requirement. A future explicitly authorized phase
+may add conservative macOS/Darwin collection through the same contracts after
+real-system validation resources are available.
 
 **Deliverables:** macOS identity, listeners, process/application attribution,
 services, and firewall posture where authoritative collection is available;
@@ -189,21 +193,22 @@ failures, and conservative coverage.
 
 **Non-goals:** GUI, unified-log analysis, remediation, and fleet collection.
 
-### v0.5.x — cross-platform collector maturity
+### v0.5.x — supported-platform collector maturity
 
-**Objective:** Prove that Linux, Windows, and macOS feed one stable deterministic
-engine without erasing legitimate OS differences.
+**Objective:** Prove that Linux and Windows feed one stable deterministic engine
+without erasing legitimate OS differences. A future macOS/Darwin implementation
+would have to pass the same contracts before entering supported scope.
 
 **Deliverables:** reusable conformance tests, versioned observation DTOs,
 granular coverage, fixture provenance, compatibility rules, parser fuzz/property
 tests, and a clear boundary between shared interpretation and OS-specific policy.
 
-**Dependencies:** all three adapters.
+**Dependencies:** the current Windows and Linux adapters.
 
 **Trust gate:** equivalent observations yield equivalent conclusions;
 unsupported domains never appear complete.
 
-**Test gate:** cross-platform CI, golden fixtures, finding-ID stability where
+**Test gate:** supported-platform CI, golden fixtures, finding-ID stability where
 semantically equivalent, and backward-compatible reports/memory.
 
 **Non-goals:** new scanner domains and presentation work.
@@ -298,7 +303,7 @@ requirements change.
 - Honeypot management placeholders until that subsystem is safe
 - Memory/integrity health and privacy/settings controls
 
-**Dependencies:** application-service DTOs and cross-platform core behavior.
+**Dependencies:** application-service DTOs and platform-neutral core behavior.
 
 **Trust gate:** UI state is never authority; approvals show and bind the exact
 plan; untrusted content renders inertly; no direct SQLite/collector access.
@@ -373,21 +378,21 @@ privacy snapshots, malicious-context suites, and deterministic fallback.
 
 **Non-goals:** model-required scanning, open-ended execution, and silent cloud use.
 
-### 1.0 — professional cross-platform release
+### 1.0 — professional supported-platform release
 
 **Objective:** Integrate proven components into a signed, supportable desktop
 security-intelligence assistant.
 
 **Release gate**
 
-- Linux, Windows, and macOS adapters meet coverage and privacy contracts.
+- Linux and Windows adapters meet coverage and privacy contracts.
 - The application service and GUI cannot bypass authority or authorization.
 - Vulnerability applicability is evidence-backed and conservative.
 - Briefings and bounded investigations remain useful with models disabled.
 - Memory migrations, locking, corruption, retention, and recovery are tested.
 - Installers, signing, update policy, SBOM, privacy documentation, and supported
   platform matrices are ready.
-- Independent security review and cross-platform/adversarial acceptance tests
+- Independent security review and supported-platform/adversarial acceptance tests
   have no unresolved blockers.
 
 **Non-goals:** enterprise EDR, autonomous remediation, arbitrary plugins,
@@ -477,8 +482,9 @@ are not blockers for Windows v0.4 Phase 3.
 
 ### Log analysis
 
-Planned authorized ingestion covers Linux logs, Windows Event Logs, macOS
-unified logs, CyberWatchtower logs, and honeypot telemetry. It requires
+Planned authorized ingestion covers Linux logs, Windows Event Logs,
+CyberWatchtower logs, and honeypot telemetry. A possible future macOS/Darwin
+implementation could separately consider unified logs. Ingestion requires
 source-specific normalization, explicit provenance, host/time identity, privacy
 filtering, volume/rate limits, retention, and inert hostile-text handling. Raw
 logs should not enter model prompts by default.
@@ -528,8 +534,8 @@ Before 1.0, product engineering must establish:
 - coherent package and milestone versioning;
 - an explicit license and complete distribution metadata;
 - reproducible wheel/sdist and clean-environment tests;
-- Linux packages plus Windows and macOS installers;
-- Windows signing, macOS signing/notarization, and protected signing keys;
+- Linux packages plus Windows installers;
+- Windows signing and protected signing keys;
 - a secure rollback-aware update architecture and release channels;
 - SBOM generation, dependency provenance, pinned build tooling, and supply-chain
   review;
@@ -541,8 +547,8 @@ Before 1.0, product engineering must establish:
 
 ### Must have for 1.0
 
-- Linux, Windows, and macOS deterministic collection with explicit coverage
-- Cross-platform adapter and fixture maturity
+- Linux and Windows deterministic collection with explicit coverage
+- Supported-platform adapter and fixture maturity
 - Application-service layer and safe single-writer memory ownership
 - Professional desktop GUI
 - Deterministic/no-model operation
@@ -583,14 +589,16 @@ Before 1.0, product engineering must establish:
 ```text
 v0.3 observation contracts
     ├─→ Windows adapter ─┐
-    ├─→ Linux adapter ───┼─→ cross-platform maturity
-    └─→ macOS adapter ───┘        │
+    └─→ Linux adapter ───┴─→ supported-platform maturity
                                   ├─→ application-service layer
                                   │       ├─→ desktop GUI
                                   │       ├─→ packaging/installers
                                   │       ├─→ proactive monitoring UI
                                   │       └─→ future voice/UI consumers
                                   └─→ platform investigation tools
+
+future explicit authorization + real-system validation
+    └─→ possible macOS/Darwin adapter through the same observation contracts
 
 evidence provenance + grounding
     ├─→ curated knowledge → vulnerability applicability → grounded RAG
