@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tests.native_validation import windows_native_validation_enabled
+
 from cyberwatchtower.network import assess_network_exposure
 from cyberwatchtower.platform import ListenerExposure
 from cyberwatchtower.platform.windows import (
@@ -773,7 +775,11 @@ class WindowsNetworkPrivacyAndBoundaryTests(unittest.TestCase):
             self.assertEqual(native.list_services().failure,
                              WindowsFailureCode.UNSUPPORTED)
 
-    @unittest.skipUnless(sys.platform == "win32", "requires a real Windows host")
+    @unittest.skipUnless(
+        windows_native_validation_enabled(),
+        "requires Windows native validation opt-in "
+        "(CYBERWATCHTOWER_VALIDATE_NATIVE_WINDOWS=1)",
+    )
     def test_read_only_native_endpoint_functions(self):
         native = NativeWindowsApi()
         tcp = native.get_tcp_endpoints()

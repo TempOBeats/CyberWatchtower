@@ -1,5 +1,4 @@
 import json
-import platform
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +32,7 @@ from cyberwatchtower.platform.windows.firewall_policy_integration import (
 )
 from cyberwatchtower.reporting import finding_to_dict, save_json_report
 from cyberwatchtower.scanner import run_scan
+from tests.native_validation import windows_native_validation_enabled
 from cyberwatchtower.history import compare_reports
 from cyberwatchtower.advisor.context import build_advisor_context
 from cyberwatchtower.advisor.service import build_provider_request, generate_advisory
@@ -272,8 +272,11 @@ class WindowsPlatformIntegrationTests(unittest.TestCase):
         self.assertTrue(any(item["source"] == "firewall_inbound_policy"
                             for item in uncertain["uncertain_findings"]))
 
-    @unittest.skipUnless(platform.system() == "Windows",
-                         "native Windows adapter validation requires Windows")
+    @unittest.skipUnless(
+        windows_native_validation_enabled(),
+        "requires Windows native validation opt-in "
+        "(CYBERWATCHTOWER_VALIDATE_NATIVE_WINDOWS=1)",
+    )
     def test_native_windows_adapter_read_only_smoke(self):
         result = run_scan(WindowsPlatformAdapter(
             firewall_policy_provider=ClosedWindowsFirewallPolicyProvider()

@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.native_validation import windows_native_validation_enabled
+
 from cyberwatchtower.platform import (
     FirewallEnablement,
     FirewallInboundAction,
@@ -468,7 +470,11 @@ class WindowsNativeFirewallTests(unittest.TestCase):
                 WindowsFailureCode.UNSUPPORTED,
             )
 
-    @unittest.skipUnless(sys.platform == "win32", "requires a real Windows host")
+    @unittest.skipUnless(
+        windows_native_validation_enabled(),
+        "requires Windows native validation opt-in "
+        "(CYBERWATCHTOWER_VALIDATE_NATIVE_WINDOWS=1)",
+    )
     def test_read_only_native_windows_firewall_profile_api(self):
         result = NativeWindowsApi().get_firewall_profiles()
         self.assertIsInstance(result, WindowsApiResult)

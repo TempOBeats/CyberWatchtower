@@ -20,6 +20,7 @@ from cyberwatchtower.platform.windows import (
 )
 from cyberwatchtower.report_contracts import CoverageState
 from cyberwatchtower.system_identity import derive_system_id
+from tests.native_validation import windows_native_validation_enabled
 
 
 def success(value):
@@ -259,7 +260,11 @@ class NativeWindowsSystemBoundaryTests(unittest.TestCase):
         self.assertNotIn(canary, repr(result))
         self.assertNotIn(canary, result.message)
 
-    @unittest.skipUnless(sys.platform == "win32", "requires a real Windows host")
+    @unittest.skipUnless(
+        windows_native_validation_enabled(),
+        "requires Windows native validation opt-in "
+        "(CYBERWATCHTOWER_VALIDATE_NATIVE_WINDOWS=1)",
+    )
     def test_read_only_native_system_and_identity_sources(self):
         native = NativeWindowsApi()
         system = native.get_system_info()
