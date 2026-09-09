@@ -2,6 +2,7 @@ from collections import defaultdict
 
 from .finding_identity import finding_identity
 from .presentation import report_listener_group_id
+from .report_contracts import report_schema_version
 from .scoring_report import scoring_version_from_score
 
 
@@ -66,6 +67,7 @@ def analyze_history(reports):
     )
 
     for report in reports:
+        schema_version = report_schema_version(report)
         score_data = report.get("security_score", {})
         score = score_data.get("score")
 
@@ -84,7 +86,10 @@ def analyze_history(reports):
             record["title"] = title
             record["finding_id"] = identity
             record["severity"] = finding.get("severity", "UNKNOWN")
-            record["presentation_group_id"] = report_listener_group_id(finding)
+            record["presentation_group_id"] = report_listener_group_id(
+                finding,
+                report_schema_version=schema_version,
+            )
 
             if record["first_seen"] is None:
                 record["first_seen"] = timestamp

@@ -373,7 +373,12 @@ def main(argv=None):
             print("------------")
 
             from .presentation import group_report_findings
-            for group in group_report_findings(comparison["new_findings"]):
+            for group in group_report_findings(
+                comparison["new_findings"],
+                report_schema_version=comparison[
+                    "current_report_schema_version"
+                ],
+            ):
                 finding = group.findings[0]
                 print()
                 print(f"[{finding['severity']}] {finding['title']}")

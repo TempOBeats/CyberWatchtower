@@ -6,7 +6,10 @@ from cyberwatchtower.models import (
     FindingKind,
     MAX_RUNTIME_INSTANCE_COUNT,
 )
-from cyberwatchtower.report_contracts import assessment_assurance_summary
+from cyberwatchtower.report_contracts import (
+    assessment_assurance_summary,
+    report_schema_version,
+)
 from cyberwatchtower.score_explanation import build_score_explanation
 from cyberwatchtower.reachability import reachability_from_report
 from cyberwatchtower.presentation import listener_group_id_from_values
@@ -100,13 +103,15 @@ def build_advisor_context(
         if item.get("finding_id")
     }
     findings = []
+    current_schema_version = report_schema_version(current_report)
 
     for raw_finding in current_report.get("findings", []):
         finding_id = finding_identity(dict(raw_finding))
         safe_evidence, evidence_values = _safe_evidence(raw_finding)
         try:
             reachability = reachability_from_report(
-                raw_finding.get("network_context")
+                raw_finding.get("network_context"),
+                report_schema_version=current_schema_version,
             )
         except ValueError:
             reachability = None

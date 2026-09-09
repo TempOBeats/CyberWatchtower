@@ -8,6 +8,7 @@ from .report_contracts import (
     canonical_report_digest,
     coverage_complete_for_source,
     legacy_resolution_authorizes,
+    report_schema_version,
 )
 from .scoring_report import scoring_version_from_score
 
@@ -144,6 +145,8 @@ def compare_reports(previous: dict, current: dict) -> dict:
     ]
 
     return {
+        "previous_report_schema_version": report_schema_version(previous),
+        "current_report_schema_version": report_schema_version(current),
         "previous_score": old_score,
         "current_score": new_score,
         "previous_scoring_version": previous_scoring_version,

@@ -1,6 +1,7 @@
 import copy
 import dataclasses
 import unittest
+from unittest.mock import patch
 
 from cyberwatchtower.advisor.context import build_advisor_context
 from cyberwatchtower.advisor.deterministic import build_deterministic_advisory
@@ -14,6 +15,8 @@ from cyberwatchtower.reachability import (
     ReachabilityEvidenceBasis,
     RemoteReachabilityState,
     assess_listener_reachability,
+    policy_assessment_from_report,
+    reachability_from_report,
     reachability_coverage,
 )
 from cyberwatchtower.report_contracts import CoverageState
@@ -40,6 +43,50 @@ from cyberwatchtower.platform import (
 
 
 class ReachabilityContractTests(unittest.TestCase):
+    def test_policy_parser_rejects_unsupported_version_with_valid_policy_data(self):
+        policy = {
+            "applicability": "NO_MATCH",
+            "default_policy_context": "BLOCK",
+            "evidence_basis": ["DEFAULT_POLICY_CONTEXT"],
+            "matching_rule_digests": [],
+            "rule_collection_coverage": "COMPLETE",
+            "rule_applicability_coverage": "COMPLETE",
+        }
+
+        parsed = policy_assessment_from_report(
+            policy, report_schema_version="1.6"
+        )
+        self.assertEqual(parsed.applicability.value, "NO_MATCH")
+        with self.assertRaises(ValueError):
+            policy_assessment_from_report(
+                policy, report_schema_version="9.9"
+            )
+
+    def test_report_fragment_parser_requires_explicit_supported_version(self):
+        context = {
+            "bind_exposure": "all_interfaces",
+            "bind_epistemic_role": "OBSERVED_FACT",
+            "reachability_state": "POTENTIALLY_REACHABLE",
+            "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+            "evidence_basis": ["SOCKET_WILDCARD_BIND"],
+        }
+
+        with self.assertRaises(TypeError):
+            reachability_from_report(context)
+        with self.assertRaises(ValueError):
+            reachability_from_report(
+                context,
+                report_schema_version="9.9",
+            )
+        parsed = reachability_from_report(
+            context,
+            report_schema_version="1.6",
+        )
+        self.assertEqual(
+            parsed.state,
+            RemoteReachabilityState.POTENTIALLY_REACHABLE,
+        )
+
     def test_loopback_and_interface_bind_are_distinct(self):
         loopback = assess_listener_reachability(BindExposure.LOOPBACK)
         interface = assess_listener_reachability(BindExposure.INTERFACE)
@@ -220,7 +267,7 @@ class ReachabilityPresentationTests(unittest.TestCase):
             for item in second["evidence"]
         ]
         return {
-            "schema_version": "1.3",
+            "schema_version": "1.6",
             "system": {"hostname": "WIN", "system_id": "system:test"},
             "assessment_domains": [
                 "firewall_technology", "firewall_inbound_policy",
@@ -264,6 +311,27 @@ class ReachabilityPresentationTests(unittest.TestCase):
         self.assertNotIn("evidence_basis", repr(provider))
         self.assertTrue(all(
             "presentation_group_id" not in item for item in report["findings"]
+        ))
+
+    def test_advisor_forwards_exact_enclosing_report_schema_version(self):
+        report = self._report()
+        with (
+            patch(
+                "cyberwatchtower.advisor.context.report_schema_version",
+                return_value="advisor:sentinel",
+            ) as schema_version,
+            patch(
+                "cyberwatchtower.advisor.context.reachability_from_report",
+                return_value=None,
+            ) as reachability_parser,
+        ):
+            build_advisor_context(report, None, None)
+
+        schema_version.assert_called_once_with(report)
+        self.assertEqual(len(reachability_parser.call_args_list), 2)
+        self.assertTrue(all(
+            call.kwargs["report_schema_version"] == "advisor:sentinel"
+            for call in reachability_parser.call_args_list
         ))
 
     def test_cli_projection_groups_without_mutating_atomic_findings(self):

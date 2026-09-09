@@ -342,7 +342,8 @@ class WindowsFirewallReportHistoryTests(unittest.TestCase):
         parsed = reachability_from_report(
             next(item for item in report["findings"] if item["source"] == "network")[
                 "network_context"
-            ]
+            ],
+            report_schema_version="1.6",
         )
         normalized, omitted = normalize_report(report)
         self.assertEqual(

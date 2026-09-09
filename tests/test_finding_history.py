@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from cyberwatchtower.finding_identity import finding_identity
 from cyberwatchtower.history import compare_reports
@@ -7,6 +8,53 @@ from cyberwatchtower.intelligence import analyze_history
 
 
 class HistoryComparisonTests(unittest.TestCase):
+    def test_comparison_preserves_authoritative_source_schema_versions(self):
+        previous = {
+            "schema_version": "1.5",
+            "security_score": {"score": 90},
+            "findings": [{
+                "title": "Resolved", "source": "network", "evidence": [],
+            }],
+        }
+        current = {
+            "schema_version": "1.6",
+            "security_score": {"score": 90},
+            "coverage": {"network_socket_inspection": "COMPLETE"},
+            "findings": [{
+                "title": "New", "source": "network", "evidence": [],
+            }],
+        }
+
+        comparison = compare_reports(previous, current)
+
+        self.assertEqual(comparison["previous_report_schema_version"], "1.5")
+        self.assertEqual(comparison["current_report_schema_version"], "1.6")
+        self.assertEqual(comparison["new_findings"][0]["title"], "New")
+        self.assertEqual(comparison["resolved_findings"][0]["title"], "Resolved")
+
+    def test_uncertain_findings_retain_previous_report_side_provenance(self):
+        previous_finding = {
+            "title": "Uncertain", "source": "network", "evidence": [],
+        }
+        previous = {
+            "schema_version": "1.5",
+            "security_score": {"score": 90},
+            "findings": [previous_finding],
+        }
+        current = {
+            "schema_version": "1.6",
+            "security_score": {"score": 90},
+            "coverage": {"network_socket_inspection": "INCOMPLETE"},
+            "findings": [],
+        }
+
+        comparison = compare_reports(previous, current)
+
+        self.assertEqual(comparison["previous_report_schema_version"], "1.5")
+        self.assertEqual(comparison["current_report_schema_version"], "1.6")
+        self.assertEqual(comparison["uncertain_findings"], [previous_finding])
+        self.assertIs(comparison["uncertain_findings"][0], previous_finding)
+
     def test_absent_finding_resolves_only_with_complete_relevant_coverage(self):
         finding = {
             "title": "Exposed service", "severity": "HIGH", "source": "network",
@@ -151,6 +199,36 @@ class HistoryComparisonTests(unittest.TestCase):
         result = analyze_history([report])
 
         self.assertEqual(len(result["findings"]), 2)
+
+    def test_intelligence_uses_each_source_report_schema_for_grouping(self):
+        reports = [
+            {
+                "schema_version": version,
+                "generated_at": f"2026-08-{day:02d}T12:00:00+00:00",
+                "security_score": {"score": 80},
+                "findings": [{
+                    "title": "Listener",
+                    "severity": "MEDIUM",
+                    "evidence": ["Protocol: tcp", "Port: 8080"],
+                }],
+            }
+            for day, version in ((13, "1.5"), (14, "1.6"))
+        ]
+
+        with patch(
+            "cyberwatchtower.intelligence.report_listener_group_id",
+            return_value="presentation:stable",
+        ) as group_id:
+            result = analyze_history(reports)
+
+        self.assertEqual(
+            [call.kwargs["report_schema_version"] for call in group_id.call_args_list],
+            ["1.5", "1.6"],
+        )
+        self.assertEqual(
+            result["findings"][0]["presentation_group_id"],
+            "presentation:stable",
+        )
 
 
 if __name__ == "__main__":

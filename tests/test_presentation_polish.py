@@ -37,11 +37,54 @@ def _listener(finding_id: str, address: str, port: str = "5353") -> dict:
 
 
 class PresentationPolishTests(unittest.TestCase):
+    def test_cli_new_findings_use_current_report_schema_version(self):
+        finding = _listener("finding:new", "0.0.0.0")
+        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 1, "LOW": 0, "INFO": 0}
+        results = {
+            "system": {"hostname": "host"}, "firewall": {}, "findings": [],
+            "score": {
+                "scoring_version": "1", "score": 90,
+                "risk_level": "LOW", "counts": counts,
+            },
+        }
+        comparison = {
+            "previous_report_schema_version": "previous:sentinel",
+            "current_report_schema_version": "current:sentinel",
+            "previous_score": 90, "current_score": 90, "change": 0,
+            "trend": "UNCHANGED", "new_findings": [finding],
+            "resolved_findings": [], "uncertain_findings": [],
+        }
+        intelligence = {
+            "total_scans": 2, "average_score": 90, "best_score": 90,
+            "worst_score": 90, "overall_change": 0,
+            "overall_trend": "UNCHANGED", "findings": [],
+        }
+        output = io.StringIO()
+        with (
+            patch("cyberwatchtower.cli.run_scan", return_value=results),
+            patch("cyberwatchtower.cli.save_json_report", return_value="report.json"),
+            patch("cyberwatchtower.cli.load_reports", return_value=[{}, {}]),
+            patch("cyberwatchtower.cli.compare_reports", return_value=comparison),
+            patch("cyberwatchtower.cli.analyze_history", return_value=intelligence),
+            patch("cyberwatchtower.cli._display_advisor"),
+            patch("cyberwatchtower.cli._ingest_saved_report", return_value=None),
+            patch(
+                "cyberwatchtower.presentation.group_report_findings",
+                return_value=(),
+            ) as group_findings,
+            redirect_stdout(output),
+        ):
+            main([])
+
+        group_findings.assert_called_once_with(
+            [finding], report_schema_version="current:sentinel"
+        )
+
     def test_report_grouping_retains_atomic_records_and_separates_unknown_ports(self):
         twins = [_listener("finding:v4", "0.0.0.0"), _listener("finding:v6", "::")]
         snapshot = copy.deepcopy(twins)
 
-        groups = group_report_findings(twins)
+        groups = group_report_findings(twins, report_schema_version="1.6")
 
         self.assertEqual(len(groups), 1)
         self.assertEqual(
@@ -57,15 +100,20 @@ class PresentationPolishTests(unittest.TestCase):
                 for entry in item["evidence"]
                 if not entry.startswith("Application:")
             ]
-        self.assertEqual(len(group_report_findings([unknown_a, unknown_b])), 2)
+        self.assertEqual(len(group_report_findings(
+            [unknown_a, unknown_b], report_schema_version="1.6"
+        )), 2)
+
+        with self.assertRaises(ValueError):
+            group_report_findings(twins)
 
     def test_new_and_recurring_findings_render_as_deterministic_blocks(self):
         first = _listener("finding:v4", "0.0.0.0")
         second = _listener("finding:v6", "::")
         second["runtime_instance_count"] = 2
         recurring = [
-            {**first, "occurrences": 3},
-            {**second, "occurrences": 2},
+            {**first, "occurrences": 3, "presentation_group_id": "presentation:test"},
+            {**second, "occurrences": 2, "presentation_group_id": "presentation:test"},
         ]
         recurring_snapshot = copy.deepcopy(recurring)
         counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 2, "LOW": 0, "INFO": 0}
@@ -88,6 +136,8 @@ class PresentationPolishTests(unittest.TestCase):
             },
         ]
         comparison = {
+            "previous_report_schema_version": "1.0",
+            "current_report_schema_version": "1.0",
             "previous_score": 90, "current_score": 90, "change": 0,
             "trend": "UNCHANGED", "new_findings": [second, first],
             "resolved_findings": [], "uncertain_findings": [],

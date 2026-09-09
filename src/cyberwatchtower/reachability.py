@@ -10,7 +10,17 @@ from .firewall_policy import (
     FirewallRuleApplicability,
     ListenerPolicyAssessment,
 )
-from .report_contracts import CoverageState
+from .report_contracts import (
+    APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+    CURRENT_REPORT_SCHEMA_VERSION,
+    LEGACY_REPORT_SCHEMA_VERSION,
+    MULTIPLICITY_REPORT_SCHEMA_VERSION,
+    POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
+    REACHABILITY_REPORT_SCHEMA_VERSION,
+    SCORING_REPORT_SCHEMA_VERSION,
+    STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
+    CoverageState,
+)
 
 
 class RemoteReachabilityState(str, Enum):
@@ -150,9 +160,26 @@ def reachability_coverage(
     return CoverageState.INCOMPLETE
 
 
-def reachability_from_report(value: object) -> ReachabilityAssessment | None:
+def reachability_from_report(
+    value: object,
+    *,
+    report_schema_version: str,
+) -> ReachabilityAssessment | None:
     """Read only explicit new-report metadata; never infer legacy semantics."""
 
+    supported_versions = {
+        LEGACY_REPORT_SCHEMA_VERSION,
+        STRUCTURED_FINDING_REPORT_SCHEMA_VERSION,
+        APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
+        REACHABILITY_REPORT_SCHEMA_VERSION,
+        SCORING_REPORT_SCHEMA_VERSION,
+        MULTIPLICITY_REPORT_SCHEMA_VERSION,
+        POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
+        CURRENT_REPORT_SCHEMA_VERSION,
+    }
+    if not isinstance(report_schema_version, str) \
+            or report_schema_version not in supported_versions:
+        raise ValueError("network_context requires a supported report schema version")
     if value is None:
         return None
     if not isinstance(value, dict) or set(value) not in ({
@@ -181,7 +208,8 @@ def reachability_from_report(value: object) -> ReachabilityAssessment | None:
         policy_assessment = None
         if "policy_assessment" in value:
             policy_assessment = policy_assessment_from_report(
-                value["policy_assessment"]
+                value["policy_assessment"],
+                report_schema_version=report_schema_version,
             )
         return ReachabilityAssessment(
             BindExposure(value["bind_exposure"]),
@@ -193,7 +221,11 @@ def reachability_from_report(value: object) -> ReachabilityAssessment | None:
         raise ValueError("network_context contains an unknown value") from exc
 
 
-def policy_assessment_from_report(value: object) -> ListenerPolicyAssessment:
+def policy_assessment_from_report(
+    value: object,
+    *,
+    report_schema_version: str,
+) -> ListenerPolicyAssessment:
     """Validate the bounded listener-level policy summary used by schema 1.6."""
 
     from .firewall_policy import (
@@ -204,6 +236,8 @@ def policy_assessment_from_report(value: object) -> ListenerPolicyAssessment:
         ListenerPolicyBasis,
     )
 
+    if report_schema_version != POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION:
+        raise ValueError("policy assessment requires report schema 1.6")
     expected = {
         "applicability", "default_policy_context", "evidence_basis",
         "matching_rule_digests",

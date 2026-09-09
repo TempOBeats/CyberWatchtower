@@ -81,11 +81,18 @@ def group_findings(
     )
 
 
-def report_listener_group_id(finding: dict) -> str | None:
+def report_listener_group_id(
+    finding: dict,
+    *,
+    report_schema_version: str,
+) -> str | None:
     """Derive a transient group from structured fields, never from a title."""
 
     try:
-        reachability = reachability_from_report(finding.get("network_context"))
+        reachability = reachability_from_report(
+            finding.get("network_context"),
+            report_schema_version=report_schema_version,
+        )
     except ValueError:
         return None
     if reachability is None:
@@ -118,17 +125,25 @@ def report_listener_group_id(finding: dict) -> str | None:
 
 def group_report_findings(
     findings: list[dict],
+    *,
+    report_schema_version: str | None = None,
 ) -> tuple[ReportFindingPresentationGroup, ...]:
     """Group report findings for display without changing their stored records."""
 
     grouped: dict[str, list[dict]] = {}
     order: list[str] = []
     for index, finding in enumerate(findings):
-        key = (
-            finding.get("presentation_group_id")
-            or report_listener_group_id(finding)
-            or f"atomic:{finding.get('finding_id', index)}"
-        )
+        key = finding.get("presentation_group_id")
+        if not key and "network_context" in finding:
+            if report_schema_version is None:
+                raise ValueError(
+                    "raw report findings require authoritative schema provenance"
+                )
+            key = report_listener_group_id(
+                finding,
+                report_schema_version=report_schema_version,
+            )
+        key = key or f"atomic:{finding.get('finding_id', index)}"
         if key not in grouped:
             grouped[key] = []
             order.append(key)

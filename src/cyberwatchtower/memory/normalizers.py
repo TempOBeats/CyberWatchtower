@@ -195,7 +195,10 @@ def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFi
             f"{field}.network_context.policy_assessment",
         )
     try:
-        reachability_from_report(network_context)
+        reachability_from_report(
+            network_context,
+            report_schema_version=schema_version,
+        )
     except ValueError as exc:
         raise ReportValidationError(
             "INVALID_NETWORK_CONTEXT",

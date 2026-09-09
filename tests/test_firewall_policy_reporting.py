@@ -2,6 +2,7 @@ import copy
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cyberwatchtower.history import compare_reports
 from cyberwatchtower.memory.normalizers import normalize_report
@@ -87,12 +88,42 @@ def report_mapping(context=None):
 
 
 class FirewallPolicyReportingTests(unittest.TestCase):
+    def test_memory_normalizer_forwards_each_enclosing_report_schema_version(self):
+        report_16 = report_mapping()
+        report_15 = copy.deepcopy(report_16)
+        report_15["schema_version"] = "1.5"
+        report_15["findings"][0]["network_context"].pop("policy_assessment")
+        report_15["findings"][0]["network_context"]["reachability_state"] = (
+            "POTENTIALLY_REACHABLE"
+        )
+        report_15["findings"][0]["network_context"]["evidence_basis"] = [
+            "SOCKET_WILDCARD_BIND"
+        ]
+
+        with patch(
+            "cyberwatchtower.memory.normalizers.reachability_from_report",
+            return_value=None,
+        ) as reachability_parser:
+            normalize_report(report_15)
+            normalize_report(report_16)
+
+        self.assertEqual(
+            [
+                call.kwargs["report_schema_version"]
+                for call in reachability_parser.call_args_list
+            ],
+            ["1.5", "1.6"],
+        )
+
     def test_schema_16_round_trip_keeps_only_listener_policy_summary(self):
         report = report_mapping()
         normalized, omitted = normalize_report(report)
         self.assertEqual(normalized.schema_version, "1.6")
         self.assertEqual(omitted, 0)
-        parsed = reachability_from_report(report["findings"][0]["network_context"])
+        parsed = reachability_from_report(
+            report["findings"][0]["network_context"],
+            report_schema_version="1.6",
+        )
         self.assertEqual(
             parsed.state, RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY
         )
