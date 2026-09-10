@@ -61,6 +61,12 @@ class FirewallRuleApplicability(str, Enum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+class EvaluatedPolicyDisposition(str, Enum):
+    BLOCK = "BLOCK"
+    ALLOW = "ALLOW"
+    NOT_ESTABLISHED = "NOT_ESTABLISHED"
+
+
 class FirewallConditionMatch(str, Enum):
     MATCH = "MATCH"
     NO_MATCH = "NO_MATCH"
@@ -457,6 +463,9 @@ class ListenerPolicyAssessment:
     evidence_basis: tuple[ListenerPolicyBasis, ...]
     collection_coverage: CoverageState
     applicability_coverage: CoverageState
+    evaluated_policy_disposition: EvaluatedPolicyDisposition = (
+        EvaluatedPolicyDisposition.NOT_ESTABLISHED
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.applicability, FirewallRuleApplicability):
@@ -483,6 +492,10 @@ class ListenerPolicyAssessment:
             self.applicability_coverage, CoverageState
         ):
             raise TypeError("policy coverage must use the closed enum.")
+        if not isinstance(
+            self.evaluated_policy_disposition, EvaluatedPolicyDisposition
+        ):
+            raise TypeError("evaluated policy disposition must use the closed enum.")
         complete_results = {
             FirewallRuleApplicability.MATCHING_ALLOW,
             FirewallRuleApplicability.MATCHING_BLOCK,
@@ -511,6 +524,29 @@ class ListenerPolicyAssessment:
             raise ValueError("matching allow requires explicit allow matches.")
         if self.applicability == FirewallRuleApplicability.NO_MATCH and self.matches:
             raise ValueError("no-match assessment cannot contain matches.")
+        strong_dispositions = {
+            EvaluatedPolicyDisposition.BLOCK,
+            EvaluatedPolicyDisposition.ALLOW,
+        }
+        if (
+            self.evaluated_policy_disposition in strong_dispositions
+            and (
+                self.applicability not in complete_results
+                or self.collection_coverage != CoverageState.COMPLETE
+                or self.applicability_coverage != CoverageState.COMPLETE
+            )
+        ):
+            raise ValueError(
+                "strong evaluated disposition requires complete policy evaluation."
+            )
+        if (
+            self.applicability == FirewallRuleApplicability.MATCHING_BLOCK
+            and self.evaluated_policy_disposition
+            == EvaluatedPolicyDisposition.ALLOW
+        ):
+            raise ValueError(
+                "an explicit terminal block cannot have an evaluated allow disposition."
+            )
 
     def to_report_mapping(self) -> dict[str, object]:
         return {
@@ -523,6 +559,9 @@ class ListenerPolicyAssessment:
             ],
             "rule_collection_coverage": self.collection_coverage.value,
             "rule_applicability_coverage": self.applicability_coverage.value,
+            "evaluated_policy_disposition": (
+                self.evaluated_policy_disposition.value
+            ),
         }
 
 

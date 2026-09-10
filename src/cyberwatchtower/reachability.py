@@ -7,12 +7,14 @@ from enum import Enum
 
 from .platform.models import BindExposure
 from .firewall_policy import (
+    EvaluatedPolicyDisposition,
     FirewallRuleApplicability,
     ListenerPolicyAssessment,
 )
 from .report_contracts import (
     APPLICABLE_DOMAINS_REPORT_SCHEMA_VERSION,
     CURRENT_REPORT_SCHEMA_VERSION,
+    EVALUATED_POLICY_DISPOSITION_REPORT_SCHEMA_VERSION,
     LEGACY_REPORT_SCHEMA_VERSION,
     MULTIPLICITY_REPORT_SCHEMA_VERSION,
     POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
@@ -226,7 +228,7 @@ def policy_assessment_from_report(
     *,
     report_schema_version: str,
 ) -> ListenerPolicyAssessment:
-    """Validate the bounded listener-level policy summary used by schema 1.6."""
+    """Validate the versioned bounded listener-level policy summary."""
 
     from .firewall_policy import (
         FirewallDefaultPolicyContext,
@@ -236,13 +238,23 @@ def policy_assessment_from_report(
         ListenerPolicyBasis,
     )
 
-    if report_schema_version != POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION:
-        raise ValueError("policy assessment requires report schema 1.6")
-    expected = {
+    legacy_expected = {
         "applicability", "default_policy_context", "evidence_basis",
         "matching_rule_digests",
         "rule_collection_coverage", "rule_applicability_coverage",
     }
+    if report_schema_version == POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION:
+        expected = legacy_expected
+        disposition = EvaluatedPolicyDisposition.NOT_ESTABLISHED
+    elif report_schema_version == EVALUATED_POLICY_DISPOSITION_REPORT_SCHEMA_VERSION:
+        expected = legacy_expected | {"evaluated_policy_disposition"}
+        if not isinstance(value, dict):
+            raise ValueError("policy assessment has an invalid structure")
+        disposition = EvaluatedPolicyDisposition(
+            value.get("evaluated_policy_disposition")
+        )
+    else:
+        raise ValueError("policy assessment requires a supported report schema")
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError("policy assessment has an invalid structure")
     digests = value["matching_rule_digests"]
@@ -269,4 +281,5 @@ def policy_assessment_from_report(
         tuple(ListenerPolicyBasis(item) for item in basis),
         CoverageState(value["rule_collection_coverage"]),
         CoverageState(value["rule_applicability_coverage"]),
+        disposition,
     )

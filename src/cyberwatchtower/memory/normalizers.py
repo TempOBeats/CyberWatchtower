@@ -163,6 +163,7 @@ def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFi
     if schema_version in {
         MULTIPLICITY_REPORT_SCHEMA_VERSION,
         POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
+        CURRENT_REPORT_SCHEMA_VERSION,
     }:
         if "runtime_instance_count" not in finding:
             raise ReportValidationError(
@@ -185,13 +186,16 @@ def _finding(raw_finding, index: int, schema_version: str) -> tuple[NormalizedFi
         )
     network_context = finding.get("network_context")
     if (
-        schema_version != POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION
+        schema_version not in {
+            POLICY_APPLICABILITY_REPORT_SCHEMA_VERSION,
+            CURRENT_REPORT_SCHEMA_VERSION,
+        }
         and isinstance(network_context, Mapping)
         and "policy_assessment" in network_context
     ):
         raise ReportValidationError(
             "POLICY_METADATA_SCHEMA_MISMATCH",
-            f"{field}.network_context policy metadata requires schema 1.6.",
+            f"{field}.network_context policy metadata requires schema 1.6 or 1.7.",
             f"{field}.network_context.policy_assessment",
         )
     try:

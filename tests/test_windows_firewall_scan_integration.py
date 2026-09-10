@@ -121,7 +121,7 @@ def network_finding(result):
 
 def report_mapping(result):
     return {
-        "schema_version": "1.6",
+        "schema_version": "1.7",
         "generated_at": "2026-01-01T00:00:00+00:00",
         "system": result["system"],
         "assessment_domains": result["assessment_domains"],
@@ -336,28 +336,32 @@ class _null_context:
 
 
 class WindowsFirewallReportHistoryTests(unittest.TestCase):
-    def test_report_16_round_trip_and_memory_normalization(self):
+    def test_report_17_round_trip_and_memory_normalization(self):
         _, result = scan(complete_policy(raw_rule()))
         report = report_mapping(result)
         parsed = reachability_from_report(
             next(item for item in report["findings"] if item["source"] == "network")[
                 "network_context"
             ],
-            report_schema_version="1.6",
+            report_schema_version="1.7",
         )
         normalized, omitted = normalize_report(report)
         self.assertEqual(
             parsed.policy_assessment.applicability,
             FirewallRuleApplicability.MATCHING_ALLOW,
         )
-        self.assertEqual(normalized.schema_version, "1.6")
+        self.assertEqual(normalized.schema_version, "1.7")
+        self.assertEqual(
+            parsed.policy_assessment.evaluated_policy_disposition.value,
+            "NOT_ESTABLISHED",
+        )
         self.assertEqual(omitted, 3)
 
         with tempfile.TemporaryDirectory() as directory:
             path = save_json_report(result, directory)
             serialized = json.loads(Path(path).read_text(encoding="utf-8"))
         encoded = json.dumps(serialized)
-        self.assertEqual(serialized["schema_version"], "1.6")
+        self.assertEqual(serialized["schema_version"], "1.7")
         self.assertIn("policy_assessment", encoded)
         self.assertNotIn("canary-secret", encoded.casefold())
 

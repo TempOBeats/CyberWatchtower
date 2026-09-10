@@ -9,6 +9,7 @@ from cyberwatchtower.firewall_policy import (
     MAX_VALUES_PER_CONDITION,
     AddressConditionKind,
     ApplicationConditionKind,
+    EvaluatedPolicyDisposition,
     FirewallAddressCondition,
     FirewallApplicationCondition,
     FirewallConditionMatch,
@@ -85,6 +86,82 @@ def rule(**changes):
 
 
 class FirewallPolicyContractTests(unittest.TestCase):
+    def test_evaluated_disposition_validation_matrix(self):
+        allow = evaluate_listener_policy(
+            subject(), (rule(),), CoverageState.COMPLETE
+        )
+        block = evaluate_listener_policy(
+            subject(), (rule(action=FirewallRuleAction.BLOCK),),
+            CoverageState.COMPLETE,
+        )
+        no_match = evaluate_listener_policy(
+            subject(), (), CoverageState.COMPLETE
+        )
+        incomplete = evaluate_listener_policy(
+            subject(), (), CoverageState.INCOMPLETE
+        )
+        unsupported = evaluate_listener_policy(
+            subject(), (), CoverageState.UNKNOWN
+        )
+        conflicting = evaluate_listener_policy(
+            subject(), tuple(sorted((
+                rule(), rule(action=FirewallRuleAction.BLOCK),
+            ), key=lambda value: value.semantic_rule_id)), CoverageState.COMPLETE,
+        )
+        ambiguous = dataclasses.replace(
+            no_match,
+            applicability=FirewallRuleApplicability.AMBIGUOUS,
+            applicability_coverage=CoverageState.INCOMPLETE,
+        )
+
+        valid = (
+            (block, EvaluatedPolicyDisposition.BLOCK),
+            (block, EvaluatedPolicyDisposition.NOT_ESTABLISHED),
+            (allow, EvaluatedPolicyDisposition.ALLOW),
+            (allow, EvaluatedPolicyDisposition.BLOCK),
+            (allow, EvaluatedPolicyDisposition.NOT_ESTABLISHED),
+            (no_match, EvaluatedPolicyDisposition.BLOCK),
+            (no_match, EvaluatedPolicyDisposition.ALLOW),
+            (no_match, EvaluatedPolicyDisposition.NOT_ESTABLISHED),
+        )
+        for assessment, disposition in valid:
+            with self.subTest(
+                applicability=assessment.applicability.value,
+                disposition=disposition.value,
+            ):
+                self.assertEqual(
+                    dataclasses.replace(
+                        assessment,
+                        evaluated_policy_disposition=disposition,
+                    ).evaluated_policy_disposition,
+                    disposition,
+                )
+
+        with self.assertRaises(ValueError):
+            dataclasses.replace(
+                block,
+                evaluated_policy_disposition=EvaluatedPolicyDisposition.ALLOW,
+            )
+        with self.assertRaises(ValueError):
+            dataclasses.replace(
+                no_match,
+                collection_coverage=CoverageState.INCOMPLETE,
+                evaluated_policy_disposition=EvaluatedPolicyDisposition.BLOCK,
+            )
+        for assessment in (incomplete, unsupported, conflicting, ambiguous):
+            for disposition in (
+                EvaluatedPolicyDisposition.BLOCK,
+                EvaluatedPolicyDisposition.ALLOW,
+            ):
+                with self.subTest(
+                    applicability=assessment.applicability.value,
+                    disposition=disposition.value,
+                ), self.assertRaises(ValueError):
+                    dataclasses.replace(
+                        assessment,
+                        evaluated_policy_disposition=disposition,
+                    )
+
     def test_contracts_are_immutable_slotted_and_bounds_are_frozen(self):
         self.assertEqual((
             MAX_FIREWALL_RULES, MAX_CONDITIONS_PER_RULE,
@@ -425,6 +502,43 @@ class PolicyReachabilityTests(unittest.TestCase):
             self.assertEqual(
                 assessment.state, RemoteReachabilityState.POTENTIALLY_REACHABLE
             )
+
+    def test_evaluated_block_is_not_consumed_before_a3b(self):
+        policy = dataclasses.replace(
+            evaluate_listener_policy(
+                subject(), (), CoverageState.COMPLETE,
+                FirewallDefaultPolicyContext.BLOCK,
+            ),
+            evaluated_policy_disposition=EvaluatedPolicyDisposition.BLOCK,
+        )
+
+        assessment = assess_listener_reachability(
+            BindExposure.ALL_INTERFACES, policy_assessment=policy
+        )
+
+        self.assertEqual(
+            assessment.state, RemoteReachabilityState.POTENTIALLY_REACHABLE
+        )
+
+    def test_evaluated_allow_does_not_confirm_reachability_before_a3b(self):
+        policy = dataclasses.replace(
+            evaluate_listener_policy(
+                subject(), (rule(),), CoverageState.COMPLETE,
+                FirewallDefaultPolicyContext.ALLOW,
+            ),
+            evaluated_policy_disposition=EvaluatedPolicyDisposition.ALLOW,
+        )
+
+        assessment = assess_listener_reachability(
+            BindExposure.ALL_INTERFACES, policy_assessment=policy
+        )
+
+        self.assertEqual(
+            assessment.state, RemoteReachabilityState.POTENTIALLY_REACHABLE
+        )
+        self.assertNotEqual(
+            assessment.state, RemoteReachabilityState.CONFIRMED_REACHABLE
+        )
 
     def test_blocked_and_not_bound_can_complete_reachability(self):
         policy = evaluate_listener_policy(

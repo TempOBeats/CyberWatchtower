@@ -117,6 +117,19 @@ def serialized_v2_report(*, two_groups: bool = False) -> dict:
 
 
 class ScoringReportContractTests(unittest.TestCase):
+    def test_report_16_and_17_both_preserve_scoring_v2(self):
+        current = serialized_v2_report()
+        previous = copy.deepcopy(current)
+        previous["schema_version"] = "1.6"
+
+        current_normalized, _ = normalize_report(current)
+        previous_normalized, _ = normalize_report(previous)
+
+        self.assertEqual(current["schema_version"], "1.7")
+        self.assertEqual(current_normalized.score.scoring_version, "2")
+        self.assertEqual(previous_normalized.score.scoring_version, "2")
+        self.assertEqual(current_normalized.score, previous_normalized.score)
+
     def test_schemas_10_through_13_normalize_as_v1_without_recomputation(self):
         normalized = []
         for version in ("1.0", "1.1", "1.2", "1.3"):

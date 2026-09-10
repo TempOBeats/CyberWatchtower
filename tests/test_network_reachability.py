@@ -19,6 +19,7 @@ from cyberwatchtower.reachability import (
     reachability_from_report,
     reachability_coverage,
 )
+from cyberwatchtower.firewall_policy import EvaluatedPolicyDisposition
 from cyberwatchtower.report_contracts import CoverageState
 from cyberwatchtower.reporting import finding_to_dict
 from cyberwatchtower.models import Finding, FindingKind, Severity, AssessmentState
@@ -57,6 +58,10 @@ class ReachabilityContractTests(unittest.TestCase):
             policy, report_schema_version="1.6"
         )
         self.assertEqual(parsed.applicability.value, "NO_MATCH")
+        self.assertEqual(
+            parsed.evaluated_policy_disposition,
+            EvaluatedPolicyDisposition.NOT_ESTABLISHED,
+        )
         with self.assertRaises(ValueError):
             policy_assessment_from_report(
                 policy, report_schema_version="9.9"
@@ -187,6 +192,10 @@ class WindowsReachabilityIntegrationTests(unittest.TestCase):
         self.assertEqual(context["reachability_state"], "POTENTIALLY_REACHABLE")
         self.assertIn("WINDOWS_RESTRICTIVE_DEFAULT", context["evidence_basis"])
         self.assertNotEqual(context["reachability_state"], "BLOCKED_BY_OBSERVED_POLICY")
+        self.assertEqual(
+            context["policy_assessment"]["evaluated_policy_disposition"],
+            "NOT_ESTABLISHED",
+        )
 
     def test_allow_disabled_and_multi_profile_are_permissive_context_only(self):
         cases = (
@@ -267,7 +276,7 @@ class ReachabilityPresentationTests(unittest.TestCase):
             for item in second["evidence"]
         ]
         return {
-            "schema_version": "1.6",
+            "schema_version": "1.7",
             "system": {"hostname": "WIN", "system_id": "system:test"},
             "assessment_domains": [
                 "firewall_technology", "firewall_inbound_policy",
