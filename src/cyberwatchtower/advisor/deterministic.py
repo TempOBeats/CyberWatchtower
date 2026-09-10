@@ -96,6 +96,11 @@ def _finding_rationale(finding: AdvisoryFinding) -> str:
     elif finding.process and finding.port:
         rationale += f" The listener is owned by {finding.process} on port {finding.port}."
 
+    if "HOST_POLICY_EXPLICIT_BLOCK" in finding.reachability_basis:
+        rationale += " It is blocked by an observed matching firewall rule."
+    elif "HOST_POLICY_EVALUATED_BLOCK" in finding.reachability_basis:
+        rationale += " It is blocked by the evaluated observed firewall policy."
+
     if finding.is_new:
         rationale += " This finding is new since the previous scan."
     if finding.is_recurring:

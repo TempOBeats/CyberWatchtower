@@ -42,6 +42,7 @@ from cyberwatchtower.reachability import (
     reachability_coverage,
 )
 from cyberwatchtower.report_contracts import CoverageState
+from cyberwatchtower.scoring_projection import network_scoring_identity
 
 
 ANY_ADDRESS = (FirewallAddressCondition(AddressConditionKind.ANY),)
@@ -503,7 +504,7 @@ class PolicyReachabilityTests(unittest.TestCase):
                 assessment.state, RemoteReachabilityState.POTENTIALLY_REACHABLE
             )
 
-    def test_evaluated_block_is_not_consumed_before_a3b(self):
+    def test_evaluated_block_without_rule_match_blocks_reachability(self):
         policy = dataclasses.replace(
             evaluate_listener_policy(
                 subject(), (), CoverageState.COMPLETE,
@@ -517,10 +518,14 @@ class PolicyReachabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            assessment.state, RemoteReachabilityState.POTENTIALLY_REACHABLE
+            assessment.state, RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY
+        )
+        self.assertIn(
+            ReachabilityEvidenceBasis.HOST_POLICY_EVALUATED_BLOCK,
+            assessment.evidence_basis,
         )
 
-    def test_evaluated_allow_does_not_confirm_reachability_before_a3b(self):
+    def test_evaluated_allow_does_not_confirm_reachability(self):
         policy = dataclasses.replace(
             evaluate_listener_policy(
                 subject(), (rule(),), CoverageState.COMPLETE,
@@ -539,6 +544,88 @@ class PolicyReachabilityTests(unittest.TestCase):
         self.assertNotEqual(
             assessment.state, RemoteReachabilityState.CONFIRMED_REACHABLE
         )
+
+    def test_evaluated_disposition_precedence_preserves_legacy_block(self):
+        allow = evaluate_listener_policy(
+            subject(), (rule(),), CoverageState.COMPLETE,
+            FirewallDefaultPolicyContext.ALLOW,
+        )
+        block = evaluate_listener_policy(
+            subject(), (rule(action=FirewallRuleAction.BLOCK),),
+            CoverageState.COMPLETE,
+            FirewallDefaultPolicyContext.BLOCK,
+        )
+        no_match = evaluate_listener_policy(
+            subject(), (), CoverageState.COMPLETE,
+            FirewallDefaultPolicyContext.BLOCK,
+        )
+        cases = (
+            (allow, EvaluatedPolicyDisposition.ALLOW,
+             RemoteReachabilityState.POTENTIALLY_REACHABLE),
+            (allow, EvaluatedPolicyDisposition.BLOCK,
+             RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY),
+            (block, EvaluatedPolicyDisposition.BLOCK,
+             RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY),
+            (block, EvaluatedPolicyDisposition.NOT_ESTABLISHED,
+             RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY),
+            (no_match, EvaluatedPolicyDisposition.BLOCK,
+             RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY),
+            (no_match, EvaluatedPolicyDisposition.ALLOW,
+             RemoteReachabilityState.POTENTIALLY_REACHABLE),
+            (no_match, EvaluatedPolicyDisposition.NOT_ESTABLISHED,
+             RemoteReachabilityState.POTENTIALLY_REACHABLE),
+        )
+        for policy, disposition, expected in cases:
+            with self.subTest(
+                applicability=policy.applicability.value,
+                disposition=disposition.value,
+            ):
+                assessment = assess_listener_reachability(
+                    BindExposure.ALL_INTERFACES,
+                    policy_assessment=dataclasses.replace(
+                        policy, evaluated_policy_disposition=disposition
+                    ),
+                )
+                self.assertEqual(assessment.state, expected)
+                self.assertNotEqual(
+                    assessment.state, RemoteReachabilityState.CONFIRMED_REACHABLE
+                )
+
+    def test_evaluated_block_flows_into_existing_scoring_identity(self):
+        policy = evaluate_listener_policy(
+            subject(), (), CoverageState.COMPLETE,
+            FirewallDefaultPolicyContext.BLOCK,
+        )
+        potential = assess_listener_reachability(
+            BindExposure.ALL_INTERFACES, policy_assessment=policy
+        )
+        blocked = assess_listener_reachability(
+            BindExposure.ALL_INTERFACES,
+            policy_assessment=dataclasses.replace(
+                policy,
+                evaluated_policy_disposition=EvaluatedPolicyDisposition.BLOCK,
+            ),
+        )
+
+        def scoring_identity(assessment):
+            return network_scoring_identity({
+                "protocol": "tcp",
+                "port": 443,
+                "bind_exposure": assessment.bind_exposure.value,
+                "reachability_state": assessment.state.value,
+                "application_identity": "service:https",
+                "process_basename": "service.exe",
+            })
+
+        self.assertEqual(
+            potential.state, RemoteReachabilityState.POTENTIALLY_REACHABLE
+        )
+        self.assertEqual(
+            blocked.state, RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY
+        )
+        self.assertNotEqual(scoring_identity(potential), scoring_identity(blocked))
+        self.assertFalse(hasattr(scoring_identity(blocked),
+                                 "evaluated_policy_disposition"))
 
     def test_blocked_and_not_bound_can_complete_reachability(self):
         policy = evaluate_listener_policy(

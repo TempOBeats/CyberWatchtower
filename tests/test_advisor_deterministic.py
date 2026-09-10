@@ -146,6 +146,49 @@ class AdvisorContextTests(unittest.TestCase):
 
 
 class DeterministicAdvisorTests(unittest.TestCase):
+    def test_block_rationale_distinguishes_explicit_and_evaluated_policy(self):
+        def report(*, applicability, disposition, basis, policy_basis, digests):
+            value = _current_report()
+            value["schema_version"] = "1.7"
+            finding = value["findings"][0]
+            finding["network_context"] = {
+                "bind_exposure": "all_interfaces",
+                "bind_epistemic_role": "OBSERVED_FACT",
+                "reachability_state": "BLOCKED_BY_OBSERVED_POLICY",
+                "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
+                "evidence_basis": ["SOCKET_WILDCARD_BIND", basis],
+                "policy_assessment": {
+                    "applicability": applicability,
+                    "default_policy_context": "BLOCK",
+                    "evidence_basis": policy_basis,
+                    "matching_rule_digests": digests,
+                    "rule_collection_coverage": "COMPLETE",
+                    "rule_applicability_coverage": "COMPLETE",
+                    "evaluated_policy_disposition": disposition,
+                },
+            }
+            return value
+
+        explicit = build_deterministic_advisory(build_advisor_context(report(
+            applicability="MATCHING_BLOCK",
+            disposition="NOT_ESTABLISHED",
+            basis="HOST_POLICY_EXPLICIT_BLOCK",
+            policy_basis=["EXPLICIT_UNIVERSAL_BLOCK"],
+            digests=["a" * 64],
+        ), None, None)).actions[0].rationale
+        evaluated = build_deterministic_advisory(build_advisor_context(report(
+            applicability="NO_MATCH",
+            disposition="BLOCK",
+            basis="HOST_POLICY_EVALUATED_BLOCK",
+            policy_basis=["NO_APPLICABLE_RULE", "DEFAULT_POLICY_CONTEXT"],
+            digests=[],
+        ), None, None)).actions[0].rationale
+
+        self.assertIn("blocked by an observed matching firewall rule", explicit)
+        self.assertNotIn("evaluated observed firewall policy", explicit)
+        self.assertIn("blocked by the evaluated observed firewall policy", evaluated)
+        self.assertNotIn("matching firewall rule", evaluated)
+
     def test_actions_group_structurally_equivalent_listener_controls(self):
         report = _current_report()
         first = dict(report["findings"][0])

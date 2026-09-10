@@ -13,6 +13,7 @@ from cyberwatchtower.presentation import report_listener_group_id
 from cyberwatchtower.reachability import (
     ReachabilityEvidenceBasis,
     RemoteReachabilityState,
+    assess_listener_reachability,
     reachability_from_report,
 )
 from cyberwatchtower.reporting import finding_to_dict, save_json_report
@@ -288,11 +289,37 @@ class FirewallPolicyReportingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_report(report)
 
+    def test_schema_17_no_match_block_drives_derived_reachability(self):
+        report = report_mapping(no_match_policy_context("BLOCK"))
+        normalized, _ = normalize_report(report)
+        parsed = reachability_from_report(
+            report["findings"][0]["network_context"],
+            report_schema_version=normalized.schema_version,
+        )
+
+        derived = assess_listener_reachability(
+            parsed.bind_exposure,
+            policy_assessment=parsed.policy_assessment,
+        )
+
+        self.assertEqual(
+            derived.state, RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY
+        )
+        self.assertIn(
+            ReachabilityEvidenceBasis.HOST_POLICY_EVALUATED_BLOCK,
+            derived.evidence_basis,
+        )
+
     def test_mixed_schema_history_preserves_per_side_policy_meaning(self):
         previous = report_mapping(
             no_match_policy_context(), schema_version="1.6"
         )
         current = report_mapping(no_match_policy_context("BLOCK"))
+        current_context = current["findings"][0]["network_context"]
+        current_context["reachability_state"] = "BLOCKED_BY_OBSERVED_POLICY"
+        current_context["evidence_basis"] = [
+            "SOCKET_WILDCARD_BIND", "HOST_POLICY_EVALUATED_BLOCK",
+        ]
 
         comparison = compare_reports(previous, current)
         previous_policy = reachability_from_report(
@@ -311,6 +338,18 @@ class FirewallPolicyReportingTests(unittest.TestCase):
         self.assertEqual(
             current_policy.evaluated_policy_disposition,
             EvaluatedPolicyDisposition.BLOCK,
+        )
+        self.assertEqual(
+            previous["findings"][0]["network_context"]["reachability_state"],
+            "POTENTIALLY_REACHABLE",
+        )
+        self.assertEqual(
+            current_context["reachability_state"],
+            "BLOCKED_BY_OBSERVED_POLICY",
+        )
+        self.assertEqual(
+            previous["findings"][0]["finding_id"],
+            current["findings"][0]["finding_id"],
         )
         self.assertEqual(comparison["new_findings"], [])
         self.assertEqual(comparison["resolved_findings"], [])

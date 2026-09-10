@@ -44,6 +44,7 @@ class ReachabilityEvidenceBasis(str, Enum):
     LINUX_INPUT_DROP = "LINUX_INPUT_DROP"
     FIREWALL_POLICY_UNKNOWN = "FIREWALL_POLICY_UNKNOWN"
     HOST_POLICY_EXPLICIT_BLOCK = "HOST_POLICY_EXPLICIT_BLOCK"
+    HOST_POLICY_EVALUATED_BLOCK = "HOST_POLICY_EVALUATED_BLOCK"
     HOST_POLICY_EXPLICIT_ALLOW = "HOST_POLICY_EXPLICIT_ALLOW"
     HOST_POLICY_DEFAULT_CONTEXT = "HOST_POLICY_DEFAULT_CONTEXT"
     HOST_POLICY_INCOMPLETE = "HOST_POLICY_INCOMPLETE"
@@ -116,6 +117,18 @@ def assess_listener_reachability(
         state = RemoteReachabilityState.NOT_REMOTELY_BOUND
     elif policy_assessment is None:
         state = RemoteReachabilityState.POTENTIALLY_REACHABLE
+    elif (
+        policy_assessment.evaluated_policy_disposition
+        == EvaluatedPolicyDisposition.BLOCK
+    ):
+        state = RemoteReachabilityState.BLOCKED_BY_OBSERVED_POLICY
+        block_basis = (
+            ReachabilityEvidenceBasis.HOST_POLICY_EXPLICIT_BLOCK
+            if policy_assessment.applicability
+            == FirewallRuleApplicability.MATCHING_BLOCK
+            else ReachabilityEvidenceBasis.HOST_POLICY_EVALUATED_BLOCK
+        )
+        basis = tuple(dict.fromkeys((*basis, block_basis)))
     elif (
         policy_assessment.applicability
         == FirewallRuleApplicability.MATCHING_BLOCK
