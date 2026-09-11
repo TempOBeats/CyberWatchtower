@@ -401,19 +401,38 @@ class LinuxAdapterContractTests(unittest.TestCase):
     def test_platform_package_exposes_no_command_execution_abstraction(self):
         package = Path(__file__).parents[1] / "src" / "cyberwatchtower" / "platform"
         prohibited = ("subprocess", "shell=True", "os.system", "eval(", "exec(")
+        permitted_sources = {
+            "subprocess": {
+                "linux/nftables_native.py",
+                "windows/firewall_rule_transport.py",
+            },
+            "shell=True": set(),
+            "os.system": set(),
+            "eval(": set(),
+            "exec(": set(),
+        }
+        observed_sources = {marker: set() for marker in prohibited}
         for source in package.rglob("*.py"):
             text = source.read_text(encoding="utf-8")
+            relative_source = source.relative_to(package).as_posix()
             for marker in prohibited:
-                with self.subTest(source=source.name, marker=marker):
-                    if source.name == "firewall_rule_transport.py" \
-                            and marker == "subprocess":
-                        self.assertIn("shell=False", text)
-                        self.assertIn(
-                            '"cyberwatchtower.platform.windows.firewall_rule_helper"',
-                            text,
-                        )
-                        continue
-                    self.assertNotIn(marker, text)
+                if marker in text:
+                    observed_sources[marker].add(relative_source)
+        self.assertEqual(observed_sources, permitted_sources)
+
+        linux_native = (package / "linux" / "nftables_native.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("subprocess.Popen", linux_native)
+        self.assertIn("shell=False", linux_native)
+        windows_transport = (
+            package / "windows" / "firewall_rule_transport.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("shell=False", windows_transport)
+        self.assertIn(
+            '"cyberwatchtower.platform.windows.firewall_rule_helper"',
+            windows_transport,
+        )
         linux = adapter()
         self.assertFalse(hasattr(linux, "run_command"))
 
