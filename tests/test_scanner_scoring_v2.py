@@ -17,6 +17,7 @@ from cyberwatchtower.models import AssessmentState, Finding, FindingKind, Severi
 from cyberwatchtower.platform import FirewallEnablement, FirewallInboundAction
 from cyberwatchtower.platform import FirewallProfile, FirewallProfileState
 from cyberwatchtower.platform.linux import LinuxPlatformAdapter
+from cyberwatchtower.platform.linux.firewall_policy_integration import ClosedLinuxFirewallPolicyProvider
 from cyberwatchtower.platform.windows import (
     FakeWindowsApi,
     RawFirewallProfile,
@@ -120,6 +121,7 @@ def linux_adapter(*, output=HEADER, iptables=False, policy=None):
          "tool_paths": {"nftables": "/usr/sbin/nft", "iptables": None}}
     )
     return LinuxPlatformAdapter(
+        firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
         system_collector=lambda: dict(SYSTEM),
         firewall_collector=lambda: firewall,
         network_collector=lambda: {"accessible": True, "raw_output": output},

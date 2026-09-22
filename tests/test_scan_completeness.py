@@ -27,12 +27,14 @@ from cyberwatchtower.memory import open_memory_database
 from cyberwatchtower.memory.ingestion import ingest_report
 from cyberwatchtower.memory.ingestion_models import ReportIngestionRequest
 from cyberwatchtower.platform.linux import LinuxPlatformAdapter
+from cyberwatchtower.platform.linux.firewall_policy_integration import ClosedLinuxFirewallPolicyProvider
 
 
 def _run_linux_fixture_scan():
     """Run patched Linux fixtures through an explicit hermetic adapter."""
 
     return run_scan(LinuxPlatformAdapter(
+        firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
         system_collector=scanner_module.collect_system_information,
         firewall_collector=scanner_module.check_firewall,
         network_collector=scanner_module.inspect_listening_services,
@@ -277,6 +279,7 @@ class SocketOutputValidationTests(unittest.TestCase):
         self.assertIsNone(first.services[-1]["pid"])
 
         collected = LinuxPlatformAdapter(
+            firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
             network_collector=lambda: {"accessible": True, "raw_output": raw},
             process_enricher=lambda services: services,
         ).collect_network()

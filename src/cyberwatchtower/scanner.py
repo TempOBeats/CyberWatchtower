@@ -32,6 +32,11 @@ from .report_contracts import (
 from .platform.contracts import PlatformAdapter
 from .platform.linux import LinuxPlatformAdapter
 from .platform.linux.contracts import LinuxFirewallPolicyAdapter
+from .platform.linux.firewall_policy_integration import (
+    LinuxListenerPolicyAdapterProtocol,
+    closed_linux_listener_policy,
+    normalize_linux_listener_policy,
+)
 from .platform.models import FailureCategory
 from .platform.models import (
     BindExposure,
@@ -66,6 +71,8 @@ WINDOWS_ASSESSMENT_DOMAINS = (
 LINUX_ASSESSMENT_DOMAINS = (
     *LEGACY_ASSESSMENT_DOMAINS,
     ScanDomain.NETWORK_REACHABILITY,
+    ScanDomain.HOST_FIREWALL_RULE_COLLECTION,
+    ScanDomain.HOST_FIREWALL_RULE_APPLICABILITY,
 )
 
 
@@ -136,15 +143,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
     policy_result = None
     iptables_data = {}
     policy_basis = (ReachabilityEvidenceBasis.FIREWALL_POLICY_UNKNOWN,)
-    if platform_name == "linux" and "iptables" in detected_tools:
-        linux_policy_adapter = cast(LinuxFirewallPolicyAdapter, adapter)
-        policy_result = linux_policy_adapter.collect_firewall_policy()
-        iptables_data = (
-            policy_result.observations[0].to_assessment_mapping()
-            if policy_result.observations else {}
-        )
-        policy_basis = _linux_policy_basis(iptables_data)
-    elif platform_name == "windows":
+    if platform_name == "windows":
         policy_result = adapter.collect_firewall_inbound_policy()
         policy_basis = _windows_policy_basis(policy_result)
 
@@ -162,6 +161,43 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
     services = [item.to_service_mapping() for item in network_result.observations]
     listener_policy = None
     policy_assessments = None
+    if platform_name == "linux":
+        try:
+            listener_policy = (
+                adapter.collect_listener_firewall_policy(
+                    network_result.observations, network_result.coverage,
+                )
+                if isinstance(adapter, LinuxListenerPolicyAdapterProtocol)
+                else closed_linux_listener_policy(
+                    network_result.observations, unavailable=True,
+                )
+            )
+        except Exception:
+            listener_policy = None
+        listener_policy = normalize_linux_listener_policy(
+            listener_policy, network_result.observations, network_result.coverage,
+        )
+        # Normalization above validates every atomic binding subject against
+        # the canonical projection of the listener at the same position.
+        policy_assessments = tuple(
+            binding.assessment for binding in listener_policy.bindings
+        )
+        coverage[ScanDomain.HOST_FIREWALL_RULE_COLLECTION.value] = (
+            listener_policy.collection_coverage.value
+        )
+        coverage[ScanDomain.HOST_FIREWALL_RULE_APPLICABILITY.value] = (
+            listener_policy.applicability_coverage.value
+        )
+        # The legacy view is compatibility context only, never a second
+        # structured authority or a source for the host-rule coverage domains.
+        if not listener_policy.uses_nft_policy and "iptables" in detected_tools:
+            linux_policy_adapter = cast(LinuxFirewallPolicyAdapter, adapter)
+            policy_result = linux_policy_adapter.collect_firewall_policy()
+            iptables_data = (
+                policy_result.observations[0].to_assessment_mapping()
+                if policy_result.observations else {}
+            )
+            policy_basis = _linux_policy_basis(iptables_data)
     if platform_name == "windows":
         try:
             listener_policy = (
@@ -391,7 +427,7 @@ def run_scan(adapter: PlatformAdapter | None = None) -> dict:
             )
         )
 
-    if platform_name == "linux" and "iptables" in detected_tools:
+    if platform_name == "linux" and policy_result is not None:
         # The current deterministic interpretation is explicitly Linux-only.
         # Platform-neutral adapters expose inbound posture observations, while
         # this compatibility seam preserves exact legacy iptables evidence.

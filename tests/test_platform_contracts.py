@@ -28,6 +28,9 @@ from cyberwatchtower.platform import (
     select_platform_adapter,
 )
 from cyberwatchtower.platform.linux import LinuxPlatformAdapter
+from cyberwatchtower.platform.linux.firewall_policy_integration import (
+    ClosedLinuxFirewallPolicyProvider,
+)
 from cyberwatchtower.platform.windows import WindowsPlatformAdapter
 from cyberwatchtower.report_contracts import CoverageState
 from cyberwatchtower.reporting import finding_to_dict, save_json_report
@@ -70,6 +73,7 @@ def adapter(*, output=HEADER, firewall=NFTABLES, policy=None, enricher=None):
         network_collector=lambda: {"accessible": True, "raw_output": output},
         firewall_policy_collector=lambda: policy or {},
         process_enricher=enricher or (lambda services: services),
+        firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
     )
 
 
@@ -85,6 +89,14 @@ def authoritative(result):
 
 
 class ObservationContractTests(unittest.TestCase):
+    def setUp(self):
+        native = self.enterContext(patch(
+            "cyberwatchtower.platform.linux.firewall_policy_integration."
+            "NativeLinuxFirewallPolicyProvider.collect_firewall_policy",
+            side_effect=AssertionError("portable fixture reached native provider"),
+        ))
+        self.addCleanup(native.assert_not_called)
+
     def test_firewall_posture_is_closed_immutable_and_observation_only(self):
         profile = FirewallProfileObservation(
             FirewallProfile.DEFAULT,
@@ -197,6 +209,7 @@ class ObservationContractTests(unittest.TestCase):
             system_collector=lambda: {**SYSTEM, "processor": ""},
             firewall_collector=lambda: NFTABLES,
             network_collector=lambda: {"accessible": True, "raw_output": HEADER},
+            firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
         )
         result = run_scan(linux)
         self.assertIn("processor", result["system"])
@@ -214,6 +227,14 @@ class ObservationContractTests(unittest.TestCase):
 
 
 class LinuxAdapterContractTests(unittest.TestCase):
+    def setUp(self):
+        native = self.enterContext(patch(
+            "cyberwatchtower.platform.linux.firewall_policy_integration."
+            "NativeLinuxFirewallPolicyProvider.collect_firewall_policy",
+            side_effect=AssertionError("portable fixture reached native provider"),
+        ))
+        self.addCleanup(native.assert_not_called)
+
     def test_valid_empty_and_loopback_fixtures_preserve_no_network_findings(self):
         for output in (HEADER, f"{HEADER}\n{LOOPBACK}"):
             with self.subTest(output=output):
@@ -279,7 +300,17 @@ class LinuxAdapterContractTests(unittest.TestCase):
                 "reachability_epistemic_role": "DETERMINISTIC_DERIVATION",
                 "evidence_basis": [
                     "SOCKET_WILDCARD_BIND", "FIREWALL_POLICY_UNKNOWN",
+                    "HOST_POLICY_INCOMPLETE",
                 ],
+                "policy_assessment": {
+                    "applicability": "UNSUPPORTED",
+                    "default_policy_context": "UNKNOWN",
+                    "evidence_basis": ["POLICY_TECHNOLOGY_UNSUPPORTED"],
+                    "matching_rule_digests": [],
+                    "rule_collection_coverage": "UNKNOWN",
+                    "rule_applicability_coverage": "UNKNOWN",
+                    "evaluated_policy_disposition": "NOT_ESTABLISHED",
+                },
             },
         })
         self.assertEqual(result["score"]["score"], 96)
@@ -347,6 +378,7 @@ class LinuxAdapterContractTests(unittest.TestCase):
                          "type=listening-service inspection incomplete")
 
         failed = LinuxPlatformAdapter(
+            firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
             system_collector=lambda: dict(SYSTEM),
             firewall_collector=lambda: NFTABLES,
             network_collector=lambda: {
@@ -374,6 +406,7 @@ class LinuxAdapterContractTests(unittest.TestCase):
     def test_secret_canary_cannot_cross_authoritative_pipeline(self):
         canary = "token=SECRET-CANARY"
         linux = LinuxPlatformAdapter(
+            firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
             system_collector=lambda: dict(SYSTEM),
             firewall_collector=lambda: NFTABLES,
             network_collector=lambda: {
@@ -419,6 +452,17 @@ class LinuxAdapterContractTests(unittest.TestCase):
                 if marker in text:
                     observed_sources[marker].add(relative_source)
         self.assertEqual(observed_sources, permitted_sources)
+
+        scanner_source = (package.parent / "scanner.py").read_text(encoding="utf-8")
+        adapter_source = (package / "linux" / "adapter.py").read_text(
+            encoding="utf-8"
+        )
+        for marker in (*prohibited, "os.popen", "shutil.which", "run_command("):
+            self.assertNotIn(marker, scanner_source)
+            self.assertNotIn(marker, adapter_source)
+            self.assertNotIn(marker, (
+                package / "linux" / "firewall_policy_integration.py"
+            ).read_text(encoding="utf-8"))
 
         linux_native = (package / "linux" / "nftables_native.py").read_text(
             encoding="utf-8"

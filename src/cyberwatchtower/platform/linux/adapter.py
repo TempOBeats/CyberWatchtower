@@ -31,6 +31,12 @@ from ..models import (
     SystemObservation,
 )
 from .models import FirewallPolicyObservation
+from .firewall_policy_integration import (
+    LinuxFirewallPolicyProviderProtocol,
+    LinuxListenerPolicyIntegrationResult,
+    NativeLinuxFirewallPolicyProvider,
+    collect_linux_listener_policy,
+)
 
 
 _SOCKET_CODES = {
@@ -84,12 +90,26 @@ class LinuxPlatformAdapter:
         network_collector: Callable[[], Mapping[str, object]] = inspect_listening_services,
         firewall_policy_collector: Callable[[], Mapping[str, object]] = inspect_iptables,
         process_enricher: Callable[[list[dict]], list[dict]] = enrich_process_intelligence,
+        firewall_policy_provider: LinuxFirewallPolicyProviderProtocol | None = None,
     ) -> None:
         self._system_collector = system_collector
         self._firewall_collector = firewall_collector
         self._network_collector = network_collector
         self._firewall_policy_collector = firewall_policy_collector
         self._process_enricher = process_enricher
+        self._firewall_policy_provider = (
+            firewall_policy_provider if firewall_policy_provider is not None
+            else NativeLinuxFirewallPolicyProvider()
+        )
+
+    def collect_listener_firewall_policy(
+        self,
+        listeners: tuple[ListenerObservation, ...],
+        socket_coverage: CoverageState,
+    ) -> LinuxListenerPolicyIntegrationResult:
+        return collect_linux_listener_policy(
+            self._firewall_policy_provider, listeners, socket_coverage,
+        )
 
     def collect_system(self) -> CollectionResult[SystemObservation]:
         try:

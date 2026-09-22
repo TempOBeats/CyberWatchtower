@@ -4,6 +4,7 @@ from unittest.mock import patch
 import cyberwatchtower.scanner as scanner_module
 from cyberwatchtower.models import AssessmentState, Finding, FindingKind, Severity
 from cyberwatchtower.platform.linux import LinuxPlatformAdapter
+from cyberwatchtower.platform.linux.firewall_policy_integration import ClosedLinuxFirewallPolicyProvider
 from cyberwatchtower.reporting import finding_to_dict
 from cyberwatchtower.scanner import run_scan
 
@@ -12,6 +13,7 @@ def _run_linux_fixture_scan():
     """Run patched Linux collector fixtures without consulting the host OS."""
 
     return run_scan(LinuxPlatformAdapter(
+        firewall_policy_provider=ClosedLinuxFirewallPolicyProvider(),
         system_collector=scanner_module.collect_system_information,
         firewall_collector=scanner_module.check_firewall,
         network_collector=scanner_module.inspect_listening_services,
