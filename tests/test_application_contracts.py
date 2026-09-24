@@ -21,8 +21,11 @@ class ApplicationContractTests(unittest.TestCase):
         request = CurrentSystemAssessmentRequest()
         self.assertEqual(dataclasses.fields(request), ())
         self.assertFalse(hasattr(request, "__dict__"))
-        with self.assertRaises((FrozenInstanceError, AttributeError)):
+        with self.assertRaises(
+            (FrozenInstanceError, AttributeError, TypeError)
+        ):
             request.target = "remote-host"
+        self.assertFalse(hasattr(request, "target"))
         with self.assertRaises(TypeError):
             CurrentSystemAssessmentRequest(target="remote-host")
 
