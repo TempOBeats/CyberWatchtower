@@ -42,6 +42,19 @@ class ApplicationContractTests(unittest.TestCase):
             "FirewallTechnologySummary",
             "NetworkExposureContext",
             "ProjectionNotice",
+            "ReportId",
+            "ListSavedReportsRequest",
+            "GetSavedReportRequest",
+            "GetLatestSavedReportRequest",
+            "SavedReportCompatibility",
+            "SavedReportCatalogDiagnostics",
+            "SavedReportSummary",
+            "SavedReportCatalog",
+            "SavedReportSystemSummary",
+            "SavedReportScore",
+            "SavedReportFinding",
+            "SavedReportDetail",
+            "SavedCurrentSystemAssessmentResult",
             "ScoreCategoryBreakdown",
             "ScoreContributor",
             "ScoreGuardrail",
@@ -143,6 +156,27 @@ class ApplicationContractTests(unittest.TestCase):
         self.assertFalse(hasattr(facade, "scanner"))
         self.assertFalse(hasattr(facade, "adapter"))
         self.assertFalse(hasattr(facade, "repository"))
+
+    def test_assess_and_save_uses_the_frozen_request_and_result_contract(self):
+        signature = inspect.signature(
+            CyberWatchtowerApplication.assess_and_save_current_system
+        )
+        self.assertEqual(tuple(signature.parameters), ("self", "request"))
+        request = signature.parameters["request"]
+        self.assertEqual(request.default, inspect.Parameter.empty)
+        self.assertEqual(
+            request.annotation,
+            "CurrentSystemAssessmentRequest",
+        )
+        self.assertEqual(
+            signature.return_annotation,
+            "SavedCurrentSystemAssessmentResult",
+        )
+        result = application.SavedCurrentSystemAssessmentResult
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(result)),
+            ("assessment", "report"),
+        )
 
 
 if __name__ == "__main__":

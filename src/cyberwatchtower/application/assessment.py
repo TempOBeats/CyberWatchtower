@@ -8,16 +8,9 @@ import unicodedata
 from uuid import uuid4
 
 from cyberwatchtower import scanner
-from cyberwatchtower.core.evidence import EpistemicRole
-from cyberwatchtower.firewall_policy import FirewallConditionMatch
-from cyberwatchtower.memory.sanitization import (
-    contains_sensitive_marker,
-    sanitize_evidence,
-)
 from cyberwatchtower.models import AssessmentState, Finding, FindingKind, Severity
 from cyberwatchtower.platform.errors import UnsupportedPlatformError
 from cyberwatchtower.platform.models import FirewallObservation, SystemObservation
-from cyberwatchtower.reachability import reachability_from_report
 from cyberwatchtower.report_contracts import (
     CURRENT_REPORT_SCHEMA_VERSION,
     AssessmentAssurance,
@@ -25,37 +18,33 @@ from cyberwatchtower.report_contracts import (
     assessment_assurance_summary,
     normalize_assessment_domains,
 )
-from cyberwatchtower.scoring_contracts import (
-    ScoringBasisCode,
-    ScoringCategory,
-    ScoringVersion,
-)
+from cyberwatchtower.scoring_contracts import ScoringVersion
 from cyberwatchtower.scoring_projection import canonical_finding_id
 from cyberwatchtower.scoring_report import validate_serialized_security_score
 
 from .contracts import (
-    ApplicationEvidence,
-    ApplicationEvidenceCategory,
     ApplicationFinding,
     AssessmentAssuranceSummary,
     CurrentSystemAssessmentRequest,
     CurrentSystemAssessmentResult,
     DomainCoverage,
-    EvidenceProjectionState,
-    FirewallApplicabilitySummary,
     FirewallTechnologySummary,
-    NetworkExposureContext,
+    GetLatestSavedReportRequest,
+    GetSavedReportRequest,
+    ListSavedReportsRequest,
     ProjectionNotice,
     ProjectionNoticeCode,
-    ScoreCategoryBreakdown,
-    ScoreContributor,
-    ScoreGuardrail,
+    ReportCatalogCompleteness,
+    ReportId,
+    SavedCurrentSystemAssessmentResult,
+    SavedReportCatalog,
+    SavedReportDetail,
     SecurityRiskLevel,
     SecurityScore,
-    SecurityScoreBreakdown,
     SeverityCount,
     SupportedPlatform,
     SystemSummary,
+    _system_id,
 )
 from .errors import (
     ApplicationComponent,
@@ -63,6 +52,8 @@ from .errors import (
     ApplicationFailure,
     CyberWatchtowerApplicationError,
 )
+from ._privacy import _project_evidence, _required_text_is_sensitive
+from . import reports as _reports
 
 
 _TOP_LEVEL_FIELDS = frozenset({
@@ -76,44 +67,6 @@ _SYSTEM_FIELDS = frozenset({
 _COUNT_ORDER = (
     Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW, Severity.INFO,
 )
-_EVIDENCE_CATEGORIES = {
-    "address": ApplicationEvidenceCategory.ADDRESS,
-    "exposure": ApplicationEvidenceCategory.EXPOSURE,
-    "forward policy": ApplicationEvidenceCategory.FORWARD_POLICY,
-    "firewall enabled": ApplicationEvidenceCategory.FIREWALL_ENABLED,
-    "default inbound action": ApplicationEvidenceCategory.DEFAULT_INBOUND_ACTION,
-    "block all inbound": ApplicationEvidenceCategory.BLOCK_ALL_INBOUND,
-    "input policy": ApplicationEvidenceCategory.INPUT_POLICY,
-    "output policy": ApplicationEvidenceCategory.OUTPUT_POLICY,
-    "port": ApplicationEvidenceCategory.PORT,
-    "process": ApplicationEvidenceCategory.PROCESS,
-    "profile": ApplicationEvidenceCategory.PROFILE,
-    "protocol": ApplicationEvidenceCategory.PROTOCOL,
-    "service": ApplicationEvidenceCategory.SERVICE,
-    "service/application": ApplicationEvidenceCategory.SERVICE_APPLICATION,
-}
-_SOURCE_EVIDENCE = {
-    "network": frozenset({
-        ApplicationEvidenceCategory.ADDRESS,
-        ApplicationEvidenceCategory.EXPOSURE,
-        ApplicationEvidenceCategory.PORT,
-        ApplicationEvidenceCategory.PROCESS,
-        ApplicationEvidenceCategory.PROTOCOL,
-        ApplicationEvidenceCategory.SERVICE,
-        ApplicationEvidenceCategory.SERVICE_APPLICATION,
-    }),
-    "firewall": frozenset({
-        ApplicationEvidenceCategory.INPUT_POLICY,
-        ApplicationEvidenceCategory.FORWARD_POLICY,
-        ApplicationEvidenceCategory.OUTPUT_POLICY,
-    }),
-    "firewall_inbound_policy": frozenset({
-        ApplicationEvidenceCategory.PROFILE,
-        ApplicationEvidenceCategory.FIREWALL_ENABLED,
-        ApplicationEvidenceCategory.DEFAULT_INBOUND_ACTION,
-        ApplicationEvidenceCategory.BLOCK_ALL_INBOUND,
-    }),
-}
 
 
 class _ProjectionFailure(Exception):
@@ -145,6 +98,10 @@ def _operation_id() -> str:
     return f"assessment:{uuid4().hex}"
 
 
+def _report_operation_id() -> str:
+    return f"reportop:{uuid4().hex}"
+
+
 def _application_error(
     operation_id: str,
     code: ApplicationErrorCode,
@@ -174,6 +131,82 @@ def _application_error(
         component=component,
         operation_id=operation_id,
     ))
+
+
+def _report_application_error(
+    operation_id: str,
+    code: ApplicationErrorCode,
+    component: ApplicationComponent,
+) -> CyberWatchtowerApplicationError:
+    messages = {
+        ApplicationErrorCode.INVALID_REQUEST: (
+            "The saved-report request does not match the supported operation."
+        ),
+        ApplicationErrorCode.NOT_FOUND: (
+            "The requested saved report was not found."
+        ),
+        ApplicationErrorCode.CONFLICT: (
+            "A canonical saved report name could not be reserved."
+        ),
+        ApplicationErrorCode.PERMISSION_DENIED: (
+            "The saved-report store could not be read because access was denied."
+        ),
+        ApplicationErrorCode.COMPATIBILITY_FAILURE: (
+            "A saved report did not match the supported compatibility contract."
+        ),
+        ApplicationErrorCode.INTEGRITY_FAILURE: (
+            "Saved-report integrity could not be established."
+        ),
+        ApplicationErrorCode.STORAGE_FAILURE: (
+            "The saved-report store could not be read."
+        ),
+        ApplicationErrorCode.PRIVACY_POLICY_BLOCKED: (
+            "Required saved-report data could not cross the application privacy boundary."
+        ),
+        ApplicationErrorCode.INTERNAL_FAILURE: (
+            "The saved-report operation could not be completed."
+        ),
+    }
+    return CyberWatchtowerApplicationError(ApplicationFailure(
+        code=code,
+        message=messages[code],
+        retryable=False,
+        component=component,
+        operation_id=operation_id,
+    ))
+
+
+def _valid_list_saved_reports_request(value: object) -> bool:
+    if type(value) is not ListSavedReportsRequest:
+        return False
+    try:
+        _system_id(value.system_id)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _valid_get_saved_report_request(value: object) -> bool:
+    if type(value) is not GetSavedReportRequest:
+        return False
+    try:
+        if type(value.report_id) is not ReportId:
+            return False
+        ReportId(value.report_id.value)
+        _system_id(value.expected_system_id, "expected_system_id")
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _valid_get_latest_saved_report_request(value: object) -> bool:
+    if type(value) is not GetLatestSavedReportRequest:
+        return False
+    try:
+        _system_id(value.system_id)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
 
 
 def _compatibility() -> None:
@@ -253,72 +286,6 @@ def _project_firewall(value: object) -> FirewallTechnologySummary:
     return FirewallTechnologySummary(tuple(observation.detected_tools))
 
 
-def _project_evidence(
-    finding: Finding,
-) -> tuple[tuple[ApplicationEvidence, ...], EvidenceProjectionState, int]:
-    if not isinstance(finding.evidence, list) or not all(
-        isinstance(item, str) for item in finding.evidence
-    ):
-        _compatibility()
-    safe_items, omitted = sanitize_evidence(list(finding.evidence))
-    approved = _SOURCE_EVIDENCE.get(finding.source, frozenset())
-    evidence = []
-    for item in safe_items:
-        label, value = item.split(":", 1)
-        category = _EVIDENCE_CATEGORIES.get(label.strip().casefold())
-        if category is None or category not in approved:
-            omitted += 1
-            continue
-        evidence.append(ApplicationEvidence(category, value.strip()))
-    state = (
-        EvidenceProjectionState.REDACTED
-        if omitted
-        else EvidenceProjectionState.COMPLETE
-    )
-    return tuple(evidence), state, omitted
-
-
-def _project_network_context(value: object) -> NetworkExposureContext | None:
-    if value is None:
-        return None
-    try:
-        parsed = reachability_from_report(
-            value,
-            report_schema_version=CURRENT_REPORT_SCHEMA_VERSION,
-        )
-    except (TypeError, ValueError):
-        _compatibility()
-    if parsed is None:
-        _compatibility()
-    raw = _mapping(value)
-    policy_summary = None
-    if parsed.policy_assessment is not None:
-        policy = parsed.policy_assessment
-        policy_summary = FirewallApplicabilitySummary(
-            applicability=policy.applicability,
-            default_policy_context=policy.default_policy_context,
-            evidence_basis=tuple(policy.evidence_basis),
-            matching_rule_digests=tuple(
-                match.semantic_rule_id
-                for match in policy.matches
-                if match.condition_match != FirewallConditionMatch.NO_MATCH
-            ),
-            collection_coverage=policy.collection_coverage,
-            applicability_coverage=policy.applicability_coverage,
-            evaluated_policy_disposition=policy.evaluated_policy_disposition,
-        )
-    return NetworkExposureContext(
-        bind_exposure=parsed.bind_exposure,
-        bind_epistemic_role=EpistemicRole(raw["bind_epistemic_role"]),
-        reachability_state=parsed.state,
-        reachability_epistemic_role=EpistemicRole(
-            raw["reachability_epistemic_role"]
-        ),
-        evidence_basis=tuple(parsed.evidence_basis),
-        firewall_policy=policy_summary,
-    )
-
-
 def _project_findings(
     value: object,
 ) -> tuple[tuple[ApplicationFinding, ...], tuple[ProjectionNotice, ...]]:
@@ -335,8 +302,6 @@ def _project_findings(
         except (TypeError, ValueError, AttributeError):
             _compatibility()
         finding_id = _bounded_text(finding_id, maximum=512)
-        if contains_sensitive_marker(finding_id):
-            _privacy()
         if finding_id in seen_ids:
             _compatibility()
         seen_ids.add(finding_id)
@@ -354,10 +319,7 @@ def _project_findings(
             finding_id, title, description, recommendation, source,
             technique_id, presentation_group_id,
         )
-        if any(
-            value is not None and contains_sensitive_marker(value)
-            for value in required_text
-        ):
+        if _required_text_is_sensitive(required_text):
             _privacy()
         if not isinstance(finding.severity, Severity):
             _compatibility()
@@ -371,8 +333,20 @@ def _project_findings(
             or not 0 <= finding.confidence <= 100
         ):
             _compatibility()
-        evidence, evidence_state, omitted = _project_evidence(finding)
-        network_context = _project_network_context(finding.network_context)
+        try:
+            evidence, evidence_state, omitted = _project_evidence(
+                finding.source,
+                finding.evidence,
+            )
+        except (TypeError, ValueError):
+            _compatibility()
+        try:
+            network_context = _reports._project_network_context(
+                finding.network_context,
+                report_schema_version=CURRENT_REPORT_SCHEMA_VERSION,
+            )
+        except _reports._ReportOperationFailure:
+            _compatibility()
         application_finding = ApplicationFinding(
             finding_id=finding_id,
             title=title,
@@ -416,46 +390,11 @@ def _project_score(value: object, finding_ids: set[str]) -> SecurityScore:
         _compatibility()
     if normalized.get("scoring_version") != ScoringVersion.V2.value:
         _compatibility()
-    breakdown = _mapping(normalized.get("breakdown"))
-    categories = tuple(
-        ScoreCategoryBreakdown(
-            category=ScoringCategory(item["category"]),
-            raw_penalty=item["raw_penalty"],
-            applied_penalty=item["applied_penalty"],
-            saturated=item["saturated"],
-        )
-        for item in breakdown["categories"]
-    )
-    contributors = tuple(
-        ScoreContributor(
-            group_id=item["group_id"],
-            category=ScoringCategory(item["category"]),
-            finding_ids=tuple(item["finding_ids"]),
-            severity=Severity(item["severity"]),
-            assessment_state=AssessmentState(item["assessment_state"]),
-            atomic_penalties=tuple(item["atomic_penalties"]),
-            base_penalty=item["base_penalty"],
-            raw_penalty=item["raw_penalty"],
-            applied_penalty=item["applied_penalty"],
-            basis_code=ScoringBasisCode(item["basis_code"]),
-        )
-        for item in breakdown["contributors"]
-    )
-    raw_guardrail = _mapping(breakdown["guardrail"])
-    highest = raw_guardrail["highest_confirmed_severity"]
-    guardrail = ScoreGuardrail(
-        highest_confirmed_severity=(Severity(highest) if highest is not None else None),
-        category_applied_penalty_total=raw_guardrail[
-            "category_applied_penalty_total"
-        ],
-        effective_penalty_total=raw_guardrail["effective_penalty_total"],
-        additional_guardrail_penalty=raw_guardrail[
-            "additional_guardrail_penalty"
-        ],
-        effective_score_ceiling=raw_guardrail["effective_score_ceiling"],
-        applied=raw_guardrail["applied"],
-    )
     normalized_counts = _mapping(normalized["counts"])
+    try:
+        breakdown = _reports._project_score_breakdown(normalized)
+    except _reports._ReportOperationFailure:
+        _compatibility()
     return SecurityScore(
         scoring_version=ScoringVersion.V2,
         score=normalized["score"],
@@ -464,12 +403,7 @@ def _project_score(value: object, finding_ids: set[str]) -> SecurityScore:
             SeverityCount(severity, normalized_counts[severity.value])
             for severity in _COUNT_ORDER
         ),
-        breakdown=SecurityScoreBreakdown(
-            total_effective_penalty=breakdown["total_effective_penalty"],
-            categories=categories,
-            contributors=contributors,
-            guardrail=guardrail,
-        ),
+        breakdown=breakdown,
     )
 
 
@@ -544,6 +478,71 @@ def _project_result(
     )
 
 
+def _run_current_system_assessment(
+    request: CurrentSystemAssessmentRequest,
+    operation_id: str,
+) -> tuple[dict, CurrentSystemAssessmentResult]:
+    if not isinstance(request, CurrentSystemAssessmentRequest):
+        raise _application_error(
+            operation_id,
+            ApplicationErrorCode.INVALID_REQUEST,
+            ApplicationComponent.APPLICATION,
+        )
+    try:
+        raw = _AssessmentRunner().run()
+    except UnsupportedPlatformError:
+        public_error = _application_error(
+            operation_id,
+            ApplicationErrorCode.UNSUPPORTED_PLATFORM,
+            ApplicationComponent.PLATFORM,
+        )
+    except Exception:
+        public_error = _application_error(
+            operation_id,
+            ApplicationErrorCode.INTERNAL_FAILURE,
+            ApplicationComponent.ASSESSMENT,
+        )
+    else:
+        public_error = None
+    if public_error is not None:
+        raise public_error
+
+    try:
+        return raw, _project_result(raw, operation_id)
+    except _ProjectionFailure as failure:
+        public_error = _application_error(
+            operation_id,
+            failure.code,
+            failure.component,
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        public_error = _application_error(
+            operation_id,
+            ApplicationErrorCode.COMPATIBILITY_FAILURE,
+            ApplicationComponent.PROJECTION,
+        )
+    except Exception:
+        public_error = _application_error(
+            operation_id,
+            ApplicationErrorCode.INTERNAL_FAILURE,
+            ApplicationComponent.PROJECTION,
+        )
+    raise public_error
+
+
+def _authoritative_system_id(raw: object) -> str:
+    try:
+        system = _mapping(raw)["system"]
+        system_id = _mapping(system)["system_id"]
+        _system_id(system_id)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise _ProjectionFailure(
+            ApplicationErrorCode.COMPATIBILITY_FAILURE,
+            ApplicationComponent.PROJECTION,
+        ) from None
+    return system_id
+
+
 class CyberWatchtowerApplication:
     """Single unprivileged facade for supported application use cases."""
 
@@ -557,43 +556,163 @@ class CyberWatchtowerApplication:
         request: CurrentSystemAssessmentRequest,
     ) -> CurrentSystemAssessmentResult:
         operation_id = _operation_id()
-        if not isinstance(request, CurrentSystemAssessmentRequest):
-            raise _application_error(
+        _raw, result = _run_current_system_assessment(request, operation_id)
+        return result
+
+    def assess_and_save_current_system(
+        self,
+        request: CurrentSystemAssessmentRequest,
+    ) -> SavedCurrentSystemAssessmentResult:
+        operation_id = _operation_id()
+        raw, assessment = _run_current_system_assessment(request, operation_id)
+        try:
+            expected_system_id = _authoritative_system_id(raw)
+        except _ProjectionFailure as failure:
+            public_error = _application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        else:
+            public_error = None
+        if public_error is not None:
+            raise public_error
+
+        try:
+            repository = _reports._default_report_repository()
+            stored = repository.save_scanner_result(raw)
+            if stored.summary.system_id != expected_system_id:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.INTEGRITY_FAILURE,
+                    ApplicationComponent.STORAGE,
+                )
+            return SavedCurrentSystemAssessmentResult(
+                assessment=assessment,
+                report=stored.summary,
+            )
+        except _reports._ReportOperationFailure as failure:
+            public_error = _report_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        except Exception:
+            public_error = _report_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def list_saved_reports(
+        self,
+        request: ListSavedReportsRequest,
+    ) -> SavedReportCatalog:
+        operation_id = _report_operation_id()
+        if not _valid_list_saved_reports_request(request):
+            raise _report_application_error(
                 operation_id,
                 ApplicationErrorCode.INVALID_REQUEST,
                 ApplicationComponent.APPLICATION,
             )
         try:
-            raw = _AssessmentRunner().run()
-        except UnsupportedPlatformError:
-            raise _application_error(
-                operation_id,
-                ApplicationErrorCode.UNSUPPORTED_PLATFORM,
-                ApplicationComponent.PLATFORM,
-            ) from None
-        except Exception:
-            raise _application_error(
-                operation_id,
-                ApplicationErrorCode.INTERNAL_FAILURE,
-                ApplicationComponent.ASSESSMENT,
-            ) from None
-        try:
-            return _project_result(raw, operation_id)
-        except _ProjectionFailure as failure:
-            raise _application_error(
+            repository = _reports._default_report_repository()
+            snapshot = repository.catalog_for_system(request.system_id)
+            return snapshot.public_catalog(operation_id)
+        except _reports._ReportOperationFailure as failure:
+            public_error = _report_application_error(
                 operation_id,
                 failure.code,
                 failure.component,
-            ) from None
-        except (KeyError, TypeError, ValueError, AttributeError):
-            raise _application_error(
-                operation_id,
-                ApplicationErrorCode.COMPATIBILITY_FAILURE,
-                ApplicationComponent.PROJECTION,
-            ) from None
+            )
         except Exception:
-            raise _application_error(
+            public_error = _report_application_error(
                 operation_id,
                 ApplicationErrorCode.INTERNAL_FAILURE,
-                ApplicationComponent.PROJECTION,
-            ) from None
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def get_saved_report(
+        self,
+        request: GetSavedReportRequest,
+    ) -> SavedReportDetail:
+        operation_id = _report_operation_id()
+        if not _valid_get_saved_report_request(request):
+            raise _report_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            repository = _reports._default_report_repository()
+            snapshot = repository.catalog_for_system(request.expected_system_id)
+            stored = snapshot.find(request.report_id)
+            if stored is None:
+                code = (
+                    ApplicationErrorCode.INTEGRITY_FAILURE
+                    if snapshot.completeness == ReportCatalogCompleteness.INCOMPLETE
+                    else ApplicationErrorCode.NOT_FOUND
+                )
+                raise _reports._ReportOperationFailure(
+                    code,
+                    ApplicationComponent.STORAGE,
+                )
+            return repository.read_detail(
+                stored,
+                operation_id=operation_id,
+                expected_system_id=request.expected_system_id,
+            )
+        except _reports._ReportOperationFailure as failure:
+            public_error = _report_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        except Exception:
+            public_error = _report_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def get_latest_saved_report(
+        self,
+        request: GetLatestSavedReportRequest,
+    ) -> SavedReportDetail | None:
+        operation_id = _report_operation_id()
+        if not _valid_get_latest_saved_report_request(request):
+            raise _report_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            repository = _reports._default_report_repository()
+            snapshot = repository.catalog_for_system(request.system_id)
+            if snapshot.completeness == ReportCatalogCompleteness.INCOMPLETE:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.INTEGRITY_FAILURE,
+                    ApplicationComponent.STORAGE,
+                )
+            if not snapshot.reports:
+                return None
+            return repository.read_detail(
+                snapshot.reports[-1],
+                operation_id=operation_id,
+                expected_system_id=request.system_id,
+            )
+        except _reports._ReportOperationFailure as failure:
+            public_error = _report_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        except Exception:
+            public_error = _report_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error

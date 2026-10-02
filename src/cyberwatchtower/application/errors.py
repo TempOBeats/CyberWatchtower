@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import re
 import unicodedata
 
 from cyberwatchtower.report_contracts import ScanDomain
 
-
-_OPERATION_ID = re.compile(r"^assessment:[0-9a-f]{32}$")
+from .contracts import _is_application_operation_id
 
 
 class ApplicationErrorCode(str, Enum):
@@ -65,7 +63,7 @@ class ApplicationFailure:
             raise TypeError("application failure retryability must be boolean.")
         if not isinstance(self.component, ApplicationComponent):
             raise TypeError("application component must use the closed enum.")
-        if _OPERATION_ID.fullmatch(self.operation_id) is None:
+        if not _is_application_operation_id(self.operation_id):
             raise ValueError("application failure operation id is invalid.")
         if self.domain is not None and not isinstance(self.domain, ScanDomain):
             raise TypeError("application failure domain must use the closed enum.")
