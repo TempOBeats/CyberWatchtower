@@ -10,6 +10,8 @@ from .history_models import (
     FindingHistoryQuery, FindingLifecycleSummary, FindingOccurrence, FindingTimeline,
     LatestReportSummary, LifecycleEvent, RecurringFindingsQuery, ScorePoint,
     ScoreTrendQuery, SystemHistoryQuery, VersionedScoreSeries,
+    _BoundedFindingTimeline, _BoundedLifecycleEvent, _BoundedRecurringPage,
+    _BoundedScorePoint, _BoundedScoreSeries,
 )
 
 
@@ -28,13 +30,134 @@ def _guard(operation):
     try:
         return operation()
     except sqlite3.OperationalError as exc:
-        if "locked" in str(exc).casefold():
+        if "locked" in str(exc).casefold() or "busy" in str(exc).casefold():
             raise MemoryLocked("Persistent Security Memory is locked.") from exc
         raise MemoryQueryError("Persistent Security Memory query failed.") from exc
     except sqlite3.DatabaseError as exc:
         raise MemoryCorrupt("Persistent Security Memory query encountered corruption.") from exc
     except json.JSONDecodeError as exc:
         raise MemoryCorrupt("Persistent Security Memory contains invalid stored JSON.") from exc
+
+
+def _read_snapshot(database: MemoryDatabase, operation):
+    """Run one bounded operation in one explicit SQLite read snapshot."""
+
+    connection = database.connection
+    try:
+        connection.execute("BEGIN")
+        result = operation()
+        connection.commit()
+        return result
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def _recurring_findings_page(
+    database: MemoryDatabase,
+    *,
+    system_id: str,
+    limit: int,
+    active_only: bool,
+) -> _BoundedRecurringPage:
+    def run():
+        rows = database.connection.execute(
+            """SELECT * FROM findings
+               WHERE system_id=? AND occurrence_count>=2
+               AND (?=0 OR active=1)
+               ORDER BY occurrence_count DESC,last_seen_at DESC,finding_id ASC
+               LIMIT ?""",
+            (system_id, int(active_only), limit + 1),
+        ).fetchall()
+        return _BoundedRecurringPage(
+            tuple(_summary(row) for row in rows[:limit]),
+            len(rows) > limit,
+        )
+
+    return _guard(lambda: _read_snapshot(database, run))
+
+
+def _finding_timeline_page(
+    database: MemoryDatabase,
+    *,
+    system_id: str,
+    finding_id: str,
+    limit: int,
+) -> _BoundedFindingTimeline | None:
+    def run():
+        summary = database.connection.execute(
+            "SELECT * FROM findings WHERE system_id=? AND finding_id=?",
+            (system_id, finding_id),
+        ).fetchone()
+        if summary is None:
+            return None
+        rows = database.connection.execute(
+            """SELECT e.event_type,e.occurred_at,r.content_digest,
+                      e.previous_value,e.current_value
+               FROM finding_lifecycle_events e
+               JOIN findings f
+                 ON f.finding_pk=e.finding_pk AND f.system_id=e.system_id
+               LEFT JOIN reports r
+                 ON r.report_id=e.report_id AND r.system_id=e.system_id
+               WHERE e.system_id=? AND f.finding_id=?
+               ORDER BY e.occurred_at DESC,r.content_digest DESC,
+                 CASE e.event_type
+                   WHEN 'FIRST_SEEN' THEN 1 WHEN 'SEEN' THEN 2
+                   WHEN 'REOPENED' THEN 3 WHEN 'SEVERITY_CHANGED' THEN 4
+                   WHEN 'ASSESSMENT_STATE_CHANGED' THEN 5
+                   WHEN 'KIND_CHANGED' THEN 6 WHEN 'RESOLVED' THEN 7 ELSE 8
+                 END ASC
+               LIMIT ?""",
+            (system_id, finding_id, limit + 1),
+        ).fetchall()
+        return _BoundedFindingTimeline(
+            _summary(summary),
+            tuple(_BoundedLifecycleEvent(
+                row["event_type"], row["occurred_at"], row["content_digest"],
+                row["previous_value"], row["current_value"],
+            ) for row in rows[:limit]),
+            len(rows) > limit,
+        )
+
+    return _guard(lambda: _read_snapshot(database, run))
+
+
+def _score_history_series(
+    database: MemoryDatabase,
+    *,
+    system_id: str,
+    start_at,
+    end_at,
+    limit: int,
+    scoring_version: str | None,
+) -> tuple[_BoundedScoreSeries, ...]:
+    start = start_at.astimezone(timezone.utc).isoformat()
+    end = end_at.astimezone(timezone.utc).isoformat()
+    versions = (scoring_version,) if scoring_version is not None else ("1", "2")
+
+    def run():
+        result = []
+        for version in versions:
+            rows = database.connection.execute(
+                """SELECT r.content_digest,s.observed_at,s.score,s.risk_level,
+                          s.scoring_version
+                   FROM score_history s
+                   LEFT JOIN reports r
+                     ON r.report_id=s.report_id AND r.system_id=s.system_id
+                   WHERE s.system_id=? AND s.observed_at>=? AND s.observed_at<=?
+                     AND s.scoring_version=?
+                   ORDER BY s.observed_at DESC,r.content_digest DESC
+                   LIMIT ?""",
+                (system_id, start, end, version, limit + 1),
+            ).fetchall()
+            selected = tuple(_BoundedScorePoint(
+                row["content_digest"], row["observed_at"], row["score"],
+                row["risk_level"], row["scoring_version"],
+            ) for row in reversed(rows[:limit]))
+            result.append(_BoundedScoreSeries(version, selected, len(rows) > limit))
+        return tuple(result)
+
+    return _guard(lambda: _read_snapshot(database, run))
 
 
 def recurring_findings(database: MemoryDatabase, query: RecurringFindingsQuery):

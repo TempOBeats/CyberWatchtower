@@ -6,7 +6,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from .database import MemoryDatabase, open_memory_database, open_memory_database_readonly
+from .database import (
+    MemoryDatabase,
+    _open_memory_database_readonly_unvalidated,
+    open_memory_database,
+    open_memory_database_readonly,
+    validate_memory_database,
+)
+from .models import CURRENT_MEMORY_SCHEMA_VERSION
 from .decision_models import BaselineType, Scope
 from .decisions import (
     action_response_history,
@@ -20,7 +27,7 @@ from .history_models import (
     ScoreTrendQuery,
     SystemHistoryQuery,
 )
-from .ingestion import ingest_report
+from .ingestion import _ingest_trusted_report, ingest_report
 from .ingestion_models import ReportIngestionRequest, ReportIngestionResult
 from .investigations import (
     active_conversation_references,
@@ -29,6 +36,11 @@ from .investigations import (
     latest_completed_for_scope,
 )
 from .queries import (
+    _guard,
+    _finding_timeline_page,
+    _read_snapshot,
+    _recurring_findings_page,
+    _score_history_series,
     finding_timeline,
     latest_report_summary,
     recurring_findings,
@@ -81,11 +93,96 @@ class SQLiteSecurityMemory:
     def open_readonly(cls, path: str | Path) -> "SQLiteSecurityMemory":
         return cls(open_memory_database_readonly(Path(path)))
 
+    @classmethod
+    def _open_readonly_unvalidated(cls, path: str | Path) -> "SQLiteSecurityMemory":
+        return cls(_open_memory_database_readonly_unvalidated(Path(path)))
+
+    @classmethod
+    def _expected_schema_version(cls) -> int:
+        return CURRENT_MEMORY_SCHEMA_VERSION
+
+    def _schema_version(self) -> int:
+        return self.__database.info.schema_version
+
+    def _validate_current_schema(self) -> None:
+        validate_memory_database(self.__database.connection)
+
     def close(self) -> None:
         self.__database.close()
 
     def ingest_report(self, request):
         return ingest_report(self.__database, request)
+
+    def _ingest_trusted_report(
+        self,
+        *,
+        public_report_id,
+        canonical_digest,
+        canonical_bytes,
+        normalized_report,
+        expected_system_id,
+        generated_at,
+    ):
+        return _ingest_trusted_report(
+            self.__database,
+            public_report_id=public_report_id,
+            canonical_digest=canonical_digest,
+            canonical_bytes=canonical_bytes,
+            normalized_report=normalized_report,
+            expected_system_id=expected_system_id,
+            generated_at=generated_at,
+        )
+
+    def _recurring_findings_page(self, *, system_id, limit, active_only):
+        return _recurring_findings_page(
+            self.__database,
+            system_id=system_id,
+            limit=limit,
+            active_only=active_only,
+        )
+
+    def _finding_timeline_page(self, *, system_id, finding_id, limit):
+        return _finding_timeline_page(
+            self.__database,
+            system_id=system_id,
+            finding_id=finding_id,
+            limit=limit,
+        )
+
+    def _score_history_series(
+        self,
+        *,
+        system_id,
+        start_at,
+        end_at,
+        limit,
+        scoring_version,
+    ):
+        return _score_history_series(
+            self.__database,
+            system_id=system_id,
+            start_at=start_at,
+            end_at=end_at,
+            limit=limit,
+            scoring_version=scoring_version,
+        )
+
+    def _health_snapshot(self):
+        from .integrity import _bounded_application_health
+
+        return _guard(lambda: _read_snapshot(
+            self.__database,
+            lambda: _bounded_application_health(self.__database),
+        ))
+
+    @staticmethod
+    def _health_budget_exhausted(report) -> bool:
+        from .integrity import _APPLICATION_HEALTH_BUDGET_CODE
+
+        return any(
+            diagnostic.code == _APPLICATION_HEALTH_BUDGET_CODE
+            for diagnostic in report.diagnostics
+        )
 
     def latest_report(self, query):
         return latest_report_summary(self.__database, query)

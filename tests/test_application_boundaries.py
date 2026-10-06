@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / "src" / "cyberwatchtower" / "application"
 PRODUCTION_FILES = (
     APPLICATION / "__init__.py",
+    APPLICATION / "_history.py",
+    APPLICATION / "_memory.py",
     APPLICATION / "_privacy.py",
     APPLICATION / "contracts.py",
     APPLICATION / "errors.py",
@@ -26,6 +28,9 @@ AUTHORIZED_FILES = PRODUCTION_FILES + (
     ROOT / "tests" / "test_application_assessment.py",
     ROOT / "tests" / "test_application_boundaries.py",
     ROOT / "tests" / "test_application_reports.py",
+    ROOT / "tests" / "test_application_history_contracts.py",
+    ROOT / "tests" / "test_application_history_comparison.py",
+    ROOT / "tests" / "test_application_memory_ingestion.py",
 )
 
 
@@ -53,8 +58,8 @@ class ApplicationBoundaryTests(unittest.TestCase):
         self.assertEqual(
             {path.name for path in APPLICATION.glob("*.py")},
             {
-                "__init__.py", "_privacy.py", "contracts.py", "errors.py",
-                "assessment.py", "reports.py",
+                "__init__.py", "_history.py", "_memory.py", "_privacy.py",
+                "contracts.py", "errors.py", "assessment.py", "reports.py",
             },
         )
 
@@ -68,7 +73,6 @@ class ApplicationBoundaryTests(unittest.TestCase):
             "asyncio",
             "threading",
             "multiprocessing",
-            "cyberwatchtower.history",
             "cyberwatchtower.intelligence",
             "cyberwatchtower.advisor",
             "cyberwatchtower.model_gateway",
@@ -81,24 +85,31 @@ class ApplicationBoundaryTests(unittest.TestCase):
                     imported.startswith(forbidden_prefixes),
                     f"forbidden application import: {imported}",
                 )
+                if imported == "cyberwatchtower.history":
+                    self.assertEqual(path.name, "_history.py")
                 if imported == "cyberwatchtower.reporting":
                     self.assertEqual(path.name, "reports.py")
         self.assertNotIn("platform", imports)
 
-    def test_memory_import_is_limited_to_pure_sanitization(self):
-        memory_imports = sorted(
-            imported
-            for path in PRODUCTION_FILES
-            for imported in _imports(path)
-            if imported.startswith("cyberwatchtower.memory")
-        )
-        self.assertEqual(
-            memory_imports,
-            [
-                "cyberwatchtower.memory.normalizers",
-                "cyberwatchtower.memory.sanitization",
-            ],
-        )
+    def test_memory_import_is_limited_to_pure_models_and_normalization(self):
+        for path in PRODUCTION_FILES:
+            memory_imports = {
+                imported for imported in _imports(path)
+                if imported.startswith("cyberwatchtower.memory")
+            }
+            if path.name == "_memory.py":
+                self.assertLessEqual(memory_imports, {
+                    "cyberwatchtower.memory.errors",
+                    "cyberwatchtower.memory.ingestion",
+                    "cyberwatchtower.memory.ingestion_models",
+                    "cyberwatchtower.memory.service",
+                })
+            else:
+                self.assertLessEqual(memory_imports, {
+                    "cyberwatchtower.memory.ingestion_models",
+                    "cyberwatchtower.memory.normalizers",
+                    "cyberwatchtower.memory.sanitization",
+                })
 
     def test_scanner_authority_is_resolved_at_runtime_and_called_once(self):
         assessment = APPLICATION / "assessment.py"
@@ -120,7 +131,10 @@ class ApplicationBoundaryTests(unittest.TestCase):
         self.assertNotIn("run_scan as", _source(assessment))
 
     def test_no_domain_inference_or_recalculation_helpers_are_used(self):
-        combined = "\n".join(_source(path) for path in PRODUCTION_FILES)
+        public_boundary = tuple(
+            path for path in PRODUCTION_FILES if path.name != "_memory.py"
+        )
+        combined = "\n".join(_source(path) for path in public_boundary)
         for prohibited in (
             "SOURCE_COVERAGE_REQUIREMENTS",
             "platform.system",
@@ -134,7 +148,10 @@ class ApplicationBoundaryTests(unittest.TestCase):
             self.assertNotIn(prohibited, combined)
 
     def test_only_private_repository_has_canonical_persistence_authority(self):
-        combined = "\n".join(_source(path) for path in PRODUCTION_FILES)
+        combined = "\n".join(
+            _source(path) for path in PRODUCTION_FILES
+            if path.name != "_memory.py"
+        )
         for prohibited in (
             "open_memory_database",
             "report_directory",
@@ -221,6 +238,31 @@ class ApplicationBoundaryTests(unittest.TestCase):
             _source(APPLICATION / "assessment.py"),
         )
 
+    def test_e4_adds_only_the_pairwise_comparison_facade_method(self):
+        self.assertTrue(hasattr(CyberWatchtowerApplication, "compare_saved_reports"))
+        history_source = _source(APPLICATION / "_history.py")
+        self.assertNotIn("load_reports", history_source)
+        self.assertNotIn("memory.database", history_source)
+        self.assertNotIn("memory.service", history_source)
+
+    def test_e5_and_e6_add_only_the_frozen_memory_facade_methods(self):
+        self.assertTrue(hasattr(
+            CyberWatchtowerApplication,
+            "ingest_saved_report_into_memory",
+        ))
+        for method in (
+            "list_recurring_findings",
+            "get_finding_timeline",
+            "get_score_history",
+            "get_memory_health",
+        ):
+            self.assertTrue(hasattr(CyberWatchtowerApplication, method))
+        private_memory = _source(APPLICATION / "_memory.py")
+        contracts = _source(APPLICATION / "contracts.py")
+        self.assertIn("CYBERWATCHTOWER_MEMORY_DB", private_memory)
+        self.assertNotIn("CYBERWATCHTOWER_MEMORY_DB", contracts)
+        self.assertNotIn("SQLiteSecurityMemory", contracts)
+
     def test_report_repository_is_private_and_has_no_wrong_way_import(self):
         exports = set(application.__all__)
         self.assertNotIn("_FileReportRepository", exports)
@@ -229,6 +271,35 @@ class ApplicationBoundaryTests(unittest.TestCase):
         report_imports = set(_imports(APPLICATION / "reports.py"))
         self.assertNotIn("assessment", report_imports)
         self.assertNotIn("cyberwatchtower.application.assessment", report_imports)
+
+    def test_private_seams_confine_storage_and_out_of_scope_imports(self):
+        for filename in ("_history.py",):
+            imports = set(_imports(APPLICATION / filename))
+            for prohibited in (
+                "sqlite3", "subprocess", "os", "pathlib", "asyncio",
+                "threading", "cyberwatchtower.memory.database",
+                "cyberwatchtower.memory.service",
+                "cyberwatchtower.intelligence", "cyberwatchtower.cli",
+            ):
+                self.assertNotIn(prohibited, imports, (filename, prohibited))
+        memory_imports = set(_imports(APPLICATION / "_memory.py"))
+        for prohibited in (
+            "sqlite3", "subprocess", "asyncio", "threading",
+            "cyberwatchtower.memory.database", "cyberwatchtower.intelligence",
+            "cyberwatchtower.cli",
+        ):
+            self.assertNotIn(prohibited, memory_imports, prohibited)
+        self.assertIn("cyberwatchtower.memory.service", memory_imports)
+        self.assertIn("os", memory_imports)
+        self.assertIn("pathlib", memory_imports)
+        self.assertEqual(
+            tuple(
+                imported
+                for imported in _imports(APPLICATION / "_history.py")
+                if imported == "cyberwatchtower.history"
+            ),
+            ("cyberwatchtower.history",),
+        )
 
     def test_shared_privacy_module_is_private_and_policy_is_not_duplicated(self):
         self.assertNotIn("_privacy", application.__all__)

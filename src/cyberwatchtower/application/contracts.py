@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 import re
 import unicodedata
@@ -35,8 +35,19 @@ from cyberwatchtower.scoring_contracts import (
 
 _ASSESSMENT_OPERATION_ID = re.compile(r"^assessment:[0-9a-f]{32}$")
 _REPORT_OPERATION_ID = re.compile(r"^reportop:[0-9a-f]{32}$")
+_HISTORY_OPERATION_ID = re.compile(r"^historyop:[0-9a-f]{32}$")
 _REPORT_ID = re.compile(r"^report:[0-9a-f]{64}$")
-_MAX_TEXT = 4096
+SYSTEM_ID_MAX = 4096
+FINDING_ID_MAX = 512
+RECURRING_DEFAULT_LIMIT = 50
+RECURRING_MAX_LIMIT = 200
+TIMELINE_DEFAULT_LIMIT = 100
+TIMELINE_MAX_LIMIT = 500
+SCORE_HISTORY_DEFAULT_LIMIT = 100
+SCORE_HISTORY_MAX_LIMIT = 500
+SCORE_HISTORY_MAX_RANGE_DAYS = 366
+MEMORY_HEALTH_MAX_DIAGNOSTICS = 32
+_MAX_TEXT = SYSTEM_ID_MAX
 
 
 def _text(value: object, field: str, maximum: int = _MAX_TEXT) -> None:
@@ -90,8 +101,69 @@ def _is_report_operation_id(value: object) -> bool:
     return isinstance(value, str) and _REPORT_OPERATION_ID.fullmatch(value) is not None
 
 
+def _is_history_operation_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and _HISTORY_OPERATION_ID.fullmatch(value) is not None
+    )
+
+
 def _is_application_operation_id(value: object) -> bool:
-    return _is_assessment_operation_id(value) or _is_report_operation_id(value)
+    return (
+        _is_assessment_operation_id(value)
+        or _is_report_operation_id(value)
+        or _is_history_operation_id(value)
+    )
+
+
+def _history_operation(value: object) -> None:
+    if not _is_history_operation_id(value):
+        raise ValueError("history operation id has an invalid format.")
+
+
+def _report_identity(value: object, field: str = "report_id") -> None:
+    if not isinstance(value, ReportId):
+        raise TypeError(f"{field} must use the immutable report identity.")
+
+
+def _boolean(value: object, field: str) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"{field} must be boolean.")
+
+
+def _bounded_limit(value: object, field: str, maximum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field} must be an integer.")
+    if not 1 <= value <= maximum:
+        raise ValueError(f"{field} is outside the supported bound.")
+
+
+def _score(value: object, field: str) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= 100
+    ):
+        raise ValueError(f"{field} must be between 0 and 100.")
+
+
+def _scoring_version(value: object, field: str) -> None:
+    if not isinstance(value, ScoringVersion):
+        raise TypeError(f"{field} must use the closed scoring-version enum.")
+
+
+def _bounded_result(
+    values: object,
+    expected: type,
+    returned_count: object,
+    has_more: object,
+    field: str,
+) -> None:
+    _typed_tuple(values, expected, field)
+    _non_negative_integer(returned_count, "returned_count")
+    if returned_count != len(values):
+        raise ValueError("returned_count must equal the returned tuple length.")
+    _boolean(has_more, "has_more")
 
 
 class SupportedPlatform(str, Enum):
@@ -152,6 +224,96 @@ class SavedReportField(str, Enum):
     RISK_LEVEL = "RISK_LEVEL"
     SEVERITY_COUNTS = "SEVERITY_COUNTS"
     SCORING_BREAKDOWN = "SCORING_BREAKDOWN"
+
+
+class ScoreTrendState(str, Enum):
+    IMPROVED = "IMPROVED"
+    DECLINED = "DECLINED"
+    UNCHANGED = "UNCHANGED"
+    INCOMPARABLE = "INCOMPARABLE"
+
+
+class FindingLifecycleState(str, Enum):
+    ACTIVE = "ACTIVE"
+    RESOLVED = "RESOLVED"
+    RESOLUTION_UNCERTAIN = "RESOLUTION_UNCERTAIN"
+
+
+class LifecycleEventType(str, Enum):
+    FIRST_SEEN = "FIRST_SEEN"
+    SEEN = "SEEN"
+    RESOLVED = "RESOLVED"
+    REOPENED = "REOPENED"
+    SEVERITY_CHANGED = "SEVERITY_CHANGED"
+    ASSESSMENT_STATE_CHANGED = "ASSESSMENT_STATE_CHANGED"
+    KIND_CHANGED = "KIND_CHANGED"
+
+
+LIFECYCLE_EVENT_PRECEDENCE = (
+    LifecycleEventType.FIRST_SEEN,
+    LifecycleEventType.SEEN,
+    LifecycleEventType.REOPENED,
+    LifecycleEventType.SEVERITY_CHANGED,
+    LifecycleEventType.ASSESSMENT_STATE_CHANGED,
+    LifecycleEventType.KIND_CHANGED,
+    LifecycleEventType.RESOLVED,
+)
+_LIFECYCLE_EVENT_ORDER = {
+    event_type: index
+    for index, event_type in enumerate(LIFECYCLE_EVENT_PRECEDENCE, start=1)
+}
+
+
+class MemoryIngestionStatus(str, Enum):
+    INGESTED = "INGESTED"
+    ALREADY_PRESENT = "ALREADY_PRESENT"
+
+
+class MemoryHealthState(str, Enum):
+    DISABLED = "DISABLED"
+    UNINITIALIZED = "UNINITIALIZED"
+    AVAILABLE = "AVAILABLE"
+    DEGRADED = "DEGRADED"
+    MIGRATION_REQUIRED = "MIGRATION_REQUIRED"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    CORRUPT = "CORRUPT"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class MemoryIntegrityState(str, Enum):
+    NOT_CHECKED = "NOT_CHECKED"
+    PASS = "PASS"
+    WARNING = "WARNING"
+    FAIL = "FAIL"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class MemoryDiagnosticSeverity(str, Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+
+
+class MemoryDiagnosticCategory(str, Enum):
+    CONFIGURATION = "CONFIGURATION"
+    STORAGE = "STORAGE"
+    SCHEMA = "SCHEMA"
+    INTEGRITY = "INTEGRITY"
+
+
+class MemoryDiagnosticCode(str, Enum):
+    DISABLED = "DISABLED"
+    UNINITIALIZED = "UNINITIALIZED"
+    AVAILABLE = "AVAILABLE"
+    DEGRADED = "DEGRADED"
+    MIGRATION_REQUIRED = "MIGRATION_REQUIRED"
+    INCOMPATIBLE_SCHEMA = "INCOMPATIBLE_SCHEMA"
+    CORRUPT = "CORRUPT"
+    UNAVAILABLE = "UNAVAILABLE"
+    PERMISSION_DENIED = "PERMISSION_DENIED"
+    LOCKED = "LOCKED"
+    INTEGRITY_WARNING = "INTEGRITY_WARNING"
+    INTEGRITY_FAILURE = "INTEGRITY_FAILURE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -831,3 +993,490 @@ class SavedCurrentSystemAssessmentResult:
             raise TypeError("assessment must use the immutable assessment result.")
         if not isinstance(self.report, SavedReportSummary):
             raise TypeError("report must use the immutable saved-report summary.")
+
+
+@dataclass(frozen=True, slots=True)
+class CompareSavedReportsRequest:
+    system_id: str
+    previous_report_id: ReportId
+    current_report_id: ReportId
+
+    def __post_init__(self) -> None:
+        _system_id(self.system_id)
+        _report_identity(self.previous_report_id, "previous_report_id")
+        _report_identity(self.current_report_id, "current_report_id")
+        if self.previous_report_id == self.current_report_id:
+            raise ValueError("previous and current report IDs must differ.")
+
+
+@dataclass(frozen=True, slots=True)
+class SavedReportReference:
+    report_id: ReportId
+    generated_at: datetime
+
+    def __post_init__(self) -> None:
+        _report_identity(self.report_id)
+        _aware_datetime(self.generated_at, "generated_at")
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonFindingSummary:
+    finding_id: str
+    title: str
+    severity: Severity
+    source: str
+    kind: FindingKind
+    assessment_state: AssessmentState
+
+    def __post_init__(self) -> None:
+        _text(self.finding_id, "finding_id", FINDING_ID_MAX)
+        if self.finding_id != self.finding_id.strip():
+            raise ValueError("finding_id cannot contain surrounding whitespace.")
+        _text(self.title, "title")
+        _text(self.source, "source", 256)
+        if not isinstance(self.severity, Severity):
+            raise TypeError("severity must use the closed enum.")
+        if not isinstance(self.kind, FindingKind):
+            raise TypeError("kind must use the closed enum.")
+        if not isinstance(self.assessment_state, AssessmentState):
+            raise TypeError("assessment_state must use the closed enum.")
+
+
+def _comparison_findings(
+    value: object,
+    field: str,
+) -> tuple[ComparisonFindingSummary, ...]:
+    _typed_tuple(value, ComparisonFindingSummary, field)
+    if tuple(sorted(value, key=lambda item: item.finding_id)) != value:
+        raise ValueError(f"{field} must be ordered by finding identity.")
+    if len({item.finding_id for item in value}) != len(value):
+        raise ValueError(f"{field} cannot contain duplicate finding identities.")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class SavedReportComparisonResult:
+    operation_id: str
+    system_id: str
+    previous_report: SavedReportReference
+    current_report: SavedReportReference
+    previous_score: int
+    current_score: int
+    previous_risk: str
+    current_risk: str
+    previous_scoring_version: ScoringVersion
+    current_scoring_version: ScoringVersion
+    score_trend: ScoreTrendState
+    score_change: int | None
+    added_findings: tuple[ComparisonFindingSummary, ...]
+    resolved_findings: tuple[ComparisonFindingSummary, ...]
+    uncertain_disappearances: tuple[ComparisonFindingSummary, ...]
+
+    def __post_init__(self) -> None:
+        _history_operation(self.operation_id)
+        _system_id(self.system_id)
+        if not isinstance(self.previous_report, SavedReportReference):
+            raise TypeError("previous_report must use the immutable reference.")
+        if not isinstance(self.current_report, SavedReportReference):
+            raise TypeError("current_report must use the immutable reference.")
+        previous_key = (
+            self.previous_report.generated_at,
+            self.previous_report.report_id.value,
+        )
+        current_key = (
+            self.current_report.generated_at,
+            self.current_report.report_id.value,
+        )
+        if previous_key >= current_key:
+            raise ValueError("comparison report chronology is invalid.")
+        _score(self.previous_score, "previous_score")
+        _score(self.current_score, "current_score")
+        _text(self.previous_risk, "previous_risk", 32)
+        _text(self.current_risk, "current_risk", 32)
+        _scoring_version(
+            self.previous_scoring_version, "previous_scoring_version"
+        )
+        _scoring_version(
+            self.current_scoring_version, "current_scoring_version"
+        )
+        if not isinstance(self.score_trend, ScoreTrendState):
+            raise TypeError("score_trend must use the closed enum.")
+        compatible = (
+            self.previous_scoring_version == self.current_scoring_version
+        )
+        if not compatible:
+            if (
+                self.score_trend != ScoreTrendState.INCOMPARABLE
+                or self.score_change is not None
+            ):
+                raise ValueError("incompatible scoring versions cannot be trended.")
+        else:
+            expected_change = self.current_score - self.previous_score
+            expected_trend = (
+                ScoreTrendState.IMPROVED
+                if expected_change > 0
+                else ScoreTrendState.DECLINED
+                if expected_change < 0
+                else ScoreTrendState.UNCHANGED
+            )
+            if (
+                isinstance(self.score_change, bool)
+                or not isinstance(self.score_change, int)
+                or self.score_change != expected_change
+                or self.score_trend != expected_trend
+            ):
+                raise ValueError("score trend does not match compatible scores.")
+        categories = (
+            _comparison_findings(self.added_findings, "added_findings"),
+            _comparison_findings(self.resolved_findings, "resolved_findings"),
+            _comparison_findings(
+                self.uncertain_disappearances,
+                "uncertain_disappearances",
+            ),
+        )
+        identities = [
+            finding.finding_id
+            for category in categories
+            for finding in category
+        ]
+        if len(set(identities)) != len(identities):
+            raise ValueError("comparison categories must be identity-disjoint.")
+
+
+@dataclass(frozen=True, slots=True)
+class IngestSavedReportIntoMemoryRequest:
+    system_id: str
+    report_id: ReportId
+
+    def __post_init__(self) -> None:
+        _system_id(self.system_id)
+        _report_identity(self.report_id)
+
+
+@dataclass(frozen=True, slots=True)
+class SavedReportMemoryIngestionResult:
+    operation_id: str
+    status: MemoryIngestionStatus
+    report_id: ReportId
+    system_id: str
+    schema_version: str
+
+    def __post_init__(self) -> None:
+        _history_operation(self.operation_id)
+        if not isinstance(self.status, MemoryIngestionStatus):
+            raise TypeError("status must use the closed ingestion enum.")
+        _report_identity(self.report_id)
+        _system_id(self.system_id)
+        _text(self.schema_version, "schema_version", 32)
+
+
+@dataclass(frozen=True, slots=True)
+class ListRecurringFindingsRequest:
+    system_id: str
+    limit: int = RECURRING_DEFAULT_LIMIT
+    active_only: bool = False
+
+    def __post_init__(self) -> None:
+        _system_id(self.system_id)
+        _bounded_limit(self.limit, "limit", RECURRING_MAX_LIMIT)
+        _boolean(self.active_only, "active_only")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryFindingSummary:
+    finding_id: str
+    title: str
+    severity: Severity
+    source: str
+    kind: FindingKind
+    assessment_state: AssessmentState
+    occurrence_count: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    lifecycle_state: FindingLifecycleState
+    reopen_count: int
+
+    def __post_init__(self) -> None:
+        _text(self.finding_id, "finding_id", FINDING_ID_MAX)
+        if self.finding_id != self.finding_id.strip():
+            raise ValueError("finding_id cannot contain surrounding whitespace.")
+        _text(self.title, "title")
+        _text(self.source, "source", 256)
+        if not isinstance(self.severity, Severity):
+            raise TypeError("severity must use the closed enum.")
+        if not isinstance(self.kind, FindingKind):
+            raise TypeError("kind must use the closed enum.")
+        if not isinstance(self.assessment_state, AssessmentState):
+            raise TypeError("assessment_state must use the closed enum.")
+        if (
+            isinstance(self.occurrence_count, bool)
+            or not isinstance(self.occurrence_count, int)
+            or self.occurrence_count < 1
+        ):
+            raise ValueError("occurrence_count must be a positive integer.")
+        _aware_datetime(self.first_seen_at, "first_seen_at")
+        _aware_datetime(self.last_seen_at, "last_seen_at")
+        if self.first_seen_at > self.last_seen_at:
+            raise ValueError("first_seen_at cannot follow last_seen_at.")
+        if not isinstance(self.lifecycle_state, FindingLifecycleState):
+            raise TypeError("lifecycle_state must use the closed enum.")
+        _non_negative_integer(self.reopen_count, "reopen_count")
+
+
+def _recurring_ordered(value: tuple[MemoryFindingSummary, ...]) -> None:
+    for left, right in zip(value, value[1:]):
+        if left.occurrence_count < right.occurrence_count:
+            raise ValueError("recurring findings are not deterministically ordered.")
+        if (
+            left.occurrence_count == right.occurrence_count
+            and left.last_seen_at < right.last_seen_at
+        ):
+            raise ValueError("recurring findings are not deterministically ordered.")
+        if (
+            left.occurrence_count == right.occurrence_count
+            and left.last_seen_at == right.last_seen_at
+            and left.finding_id > right.finding_id
+        ):
+            raise ValueError("recurring findings are not deterministically ordered.")
+
+
+@dataclass(frozen=True, slots=True)
+class RecurringFindingsResult:
+    operation_id: str
+    system_id: str
+    findings: tuple[MemoryFindingSummary, ...]
+    returned_count: int
+    has_more: bool
+
+    def __post_init__(self) -> None:
+        _history_operation(self.operation_id)
+        _system_id(self.system_id)
+        _bounded_result(
+            self.findings,
+            MemoryFindingSummary,
+            self.returned_count,
+            self.has_more,
+            "findings",
+        )
+        if len(self.findings) > RECURRING_MAX_LIMIT:
+            raise ValueError("recurring findings exceed the supported bound.")
+        if any(item.occurrence_count < 2 for item in self.findings):
+            raise ValueError("recurring findings require repeated occurrences.")
+        _recurring_ordered(self.findings)
+
+
+@dataclass(frozen=True, slots=True)
+class GetFindingTimelineRequest:
+    system_id: str
+    finding_id: str
+    limit: int = TIMELINE_DEFAULT_LIMIT
+
+    def __post_init__(self) -> None:
+        _system_id(self.system_id)
+        _text(self.finding_id, "finding_id", FINDING_ID_MAX)
+        if self.finding_id != self.finding_id.strip():
+            raise ValueError("finding_id cannot contain surrounding whitespace.")
+        _bounded_limit(self.limit, "limit", TIMELINE_MAX_LIMIT)
+
+
+@dataclass(frozen=True, slots=True)
+class FindingLifecycleEvent:
+    event_type: LifecycleEventType
+    occurred_at: datetime
+    report_id: ReportId
+    previous_value: str | None
+    current_value: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.event_type, LifecycleEventType):
+            raise TypeError("event_type must use the closed lifecycle enum.")
+        _aware_datetime(self.occurred_at, "occurred_at")
+        _report_identity(self.report_id)
+        _optional_text(self.previous_value, "previous_value", 512)
+        _optional_text(self.current_value, "current_value", 512)
+
+
+def _timeline_ordered(value: tuple[FindingLifecycleEvent, ...]) -> None:
+    keys = tuple(
+        (
+            event.occurred_at,
+            event.report_id.value,
+            -_LIFECYCLE_EVENT_ORDER[event.event_type],
+        )
+        for event in value
+    )
+    if any(left < right for left, right in zip(keys, keys[1:])):
+        raise ValueError("lifecycle events are not deterministically ordered.")
+
+
+@dataclass(frozen=True, slots=True)
+class FindingTimelineResult:
+    operation_id: str
+    system_id: str
+    finding_id: str
+    summary: MemoryFindingSummary
+    events: tuple[FindingLifecycleEvent, ...]
+    returned_count: int
+    has_more: bool
+
+    def __post_init__(self) -> None:
+        _history_operation(self.operation_id)
+        _system_id(self.system_id)
+        _text(self.finding_id, "finding_id", FINDING_ID_MAX)
+        if self.finding_id != self.finding_id.strip():
+            raise ValueError("finding_id cannot contain surrounding whitespace.")
+        if not isinstance(self.summary, MemoryFindingSummary):
+            raise TypeError("summary must use the immutable finding contract.")
+        if self.summary.finding_id != self.finding_id:
+            raise ValueError("timeline summary identity must match finding_id.")
+        _bounded_result(
+            self.events,
+            FindingLifecycleEvent,
+            self.returned_count,
+            self.has_more,
+            "events",
+        )
+        if len(self.events) > TIMELINE_MAX_LIMIT:
+            raise ValueError("timeline events exceed the supported bound.")
+        _timeline_ordered(self.events)
+
+
+@dataclass(frozen=True, slots=True)
+class GetScoreHistoryRequest:
+    system_id: str
+    start_at: datetime
+    end_at: datetime
+    limit: int = SCORE_HISTORY_DEFAULT_LIMIT
+    scoring_version: str | None = None
+
+    def __post_init__(self) -> None:
+        _system_id(self.system_id)
+        _aware_datetime(self.start_at, "start_at")
+        _aware_datetime(self.end_at, "end_at")
+        if self.start_at > self.end_at:
+            raise ValueError("start_at cannot follow end_at.")
+        if self.end_at - self.start_at > timedelta(
+            days=SCORE_HISTORY_MAX_RANGE_DAYS
+        ):
+            raise ValueError("score-history range exceeds 366 days.")
+        _bounded_limit(self.limit, "limit", SCORE_HISTORY_MAX_LIMIT)
+        if self.scoring_version is not None and (
+            type(self.scoring_version) is not str
+            or self.scoring_version not in ("1", "2")
+        ):
+            raise ValueError("scoring_version must be '1', '2', or omitted.")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreHistoryPoint:
+    report_id: ReportId
+    observed_at: datetime
+    score: int
+    risk_level: str
+    scoring_version: ScoringVersion
+
+    def __post_init__(self) -> None:
+        _report_identity(self.report_id)
+        _aware_datetime(self.observed_at, "observed_at")
+        _score(self.score, "score")
+        _text(self.risk_level, "risk_level", 32)
+        _scoring_version(self.scoring_version, "scoring_version")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreHistorySeries:
+    scoring_version: ScoringVersion
+    points: tuple[ScoreHistoryPoint, ...]
+    returned_count: int
+    has_more: bool
+
+    def __post_init__(self) -> None:
+        _scoring_version(self.scoring_version, "scoring_version")
+        _bounded_result(
+            self.points,
+            ScoreHistoryPoint,
+            self.returned_count,
+            self.has_more,
+            "points",
+        )
+        if len(self.points) > SCORE_HISTORY_MAX_LIMIT:
+            raise ValueError("score-history points exceed the supported bound.")
+        if any(point.scoring_version != self.scoring_version for point in self.points):
+            raise ValueError("score series cannot mix scoring versions.")
+        keys = tuple(
+            (point.observed_at, point.report_id.value) for point in self.points
+        )
+        if any(left > right for left, right in zip(keys, keys[1:])):
+            raise ValueError("score points are not chronologically ordered.")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreHistoryResult:
+    operation_id: str
+    system_id: str
+    series: tuple[ScoreHistorySeries, ...]
+
+    def __post_init__(self) -> None:
+        _history_operation(self.operation_id)
+        _system_id(self.system_id)
+        _typed_tuple(self.series, ScoreHistorySeries, "series")
+        versions = tuple(item.scoring_version for item in self.series)
+        if len(set(versions)) != len(versions):
+            raise ValueError("score history cannot duplicate a scoring version.")
+        if versions != tuple(sorted(versions, key=lambda item: item.value)):
+            raise ValueError("score-history series must use deterministic ordering.")
+
+
+@dataclass(frozen=True, slots=True)
+class GetMemoryHealthRequest:
+    """Request a read-only, privacy-safe Memory health projection."""
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryHealthDiagnostic:
+    severity: MemoryDiagnosticSeverity
+    category: MemoryDiagnosticCategory
+    code: MemoryDiagnosticCode
+    safe_summary: str
+    count: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.severity, MemoryDiagnosticSeverity):
+            raise TypeError("severity must use the closed diagnostic enum.")
+        if not isinstance(self.category, MemoryDiagnosticCategory):
+            raise TypeError("category must use the closed diagnostic enum.")
+        if not isinstance(self.code, MemoryDiagnosticCode):
+            raise TypeError("code must use the closed diagnostic enum.")
+        _text(self.safe_summary, "safe_summary", 512)
+        _non_negative_integer(self.count, "count")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryHealthResult:
+    operation_id: str
+    health_state: MemoryHealthState
+    current_schema_version: int | None
+    expected_schema_version: int
+    integrity_state: MemoryIntegrityState
+    diagnostics: tuple[MemoryHealthDiagnostic, ...]
+
+    def __post_init__(self) -> None:
+        _history_operation(self.operation_id)
+        if not isinstance(self.health_state, MemoryHealthState):
+            raise TypeError("health_state must use the closed health enum.")
+        if self.current_schema_version is not None:
+            _non_negative_integer(
+                self.current_schema_version,
+                "current_schema_version",
+            )
+        if self.expected_schema_version != 8:
+            raise ValueError("expected_schema_version must remain Memory schema 8.")
+        if not isinstance(self.integrity_state, MemoryIntegrityState):
+            raise TypeError("integrity_state must use the closed integrity enum.")
+        _typed_tuple(
+            self.diagnostics,
+            MemoryHealthDiagnostic,
+            "diagnostics",
+        )
+        if len(self.diagnostics) > MEMORY_HEALTH_MAX_DIAGNOSTICS:
+            raise ValueError("Memory health diagnostics exceed the supported bound.")

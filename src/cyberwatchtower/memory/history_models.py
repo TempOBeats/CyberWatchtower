@@ -148,3 +148,41 @@ class LatestReportSummary:
     risk_level: str
     finding_count: int
     coverage: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedRecurringPage:
+    findings: tuple[FindingLifecycleSummary, ...]
+    has_more: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedLifecycleEvent:
+    event_type: str
+    occurred_at: str
+    content_digest: str | None
+    previous_value: str | None
+    current_value: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedFindingTimeline:
+    summary: FindingLifecycleSummary
+    events: tuple[_BoundedLifecycleEvent, ...]
+    has_more: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedScorePoint:
+    content_digest: str | None
+    observed_at: str
+    score: int
+    risk_level: str
+    scoring_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedScoreSeries:
+    scoring_version: str
+    points: tuple[_BoundedScorePoint, ...]
+    has_more: bool

@@ -42,6 +42,7 @@ from cyberwatchtower.scoring_contracts import (
 from cyberwatchtower.scoring_report import validate_serialized_security_score
 
 from ._privacy import _project_evidence, _required_text_is_sensitive
+from ._memory import _TrustedReportMaterial
 from .contracts import (
     AssessmentAssuranceSummary,
     DomainCoverage,
@@ -81,6 +82,24 @@ _RELATIVE_LSTAT_SUPPORTED = (
     os.stat in os.supports_dir_fd
     and os.stat in os.supports_follow_symlinks
 )
+
+
+def _race_safe_report_open_flags() -> int | None:
+    """Return fail-closed flags for mutable report entries."""
+
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    nonblocking = getattr(os, "O_NONBLOCK", None)
+    if (
+        type(no_follow) is not int
+        or no_follow <= 0
+        or type(nonblocking) is not int
+        or nonblocking <= 0
+    ):
+        return None
+    flags = os.O_RDONLY | no_follow | nonblocking
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
 
 
 class _ReportOperationFailure(Exception):
@@ -253,6 +272,17 @@ class _ReportRepositoryPort(Protocol):
     ) -> SavedReportDetail:
         ...
 
+    def read_trusted_material(
+        self,
+        snapshot: _ReportCatalogSnapshot,
+        *,
+        report_id: ReportId,
+        expected_system_id: str,
+    ) -> _TrustedReportMaterial:
+        """Return pathless material securely revalidated from one snapshot."""
+
+        ...
+
 
 class _DiagnosticCounts:
     __slots__ = ("_counts",)
@@ -301,6 +331,13 @@ def _storage_failure() -> None:
 def _permission_failure() -> None:
     raise _ReportOperationFailure(
         ApplicationErrorCode.PERMISSION_DENIED,
+        ApplicationComponent.STORAGE,
+    )
+
+
+def _not_found_failure() -> None:
+    raise _ReportOperationFailure(
+        ApplicationErrorCode.NOT_FOUND,
         ApplicationComponent.STORAGE,
     )
 
@@ -1023,9 +1060,9 @@ class _FileReportRepository:
         if not stat.S_ISREG(before.st_mode):
             raise _CandidateReadFailure(_CandidateIssue.NONREGULAR)
 
-        flags = os.O_RDONLY | os.O_NOFOLLOW
-        if hasattr(os, "O_CLOEXEC"):
-            flags |= os.O_CLOEXEC
+        flags = _race_safe_report_open_flags()
+        if flags is None:
+            _integrity_failure()
         try:
             descriptor = os.open(name, flags, dir_fd=root_descriptor)
         except FileNotFoundError:
@@ -1161,8 +1198,10 @@ class _FileReportRepository:
         if (
             type(receipt) is not reporting._PublicationReceipt
             or not _RELATIVE_OPEN_SUPPORTED
-            or not hasattr(os, "O_NOFOLLOW")
         ):
+            _publication_compatibility_failure()
+        flags = _race_safe_report_open_flags()
+        if flags is None:
             _publication_compatibility_failure()
 
         expected_root = _RootIdentity(
@@ -1183,9 +1222,6 @@ class _FileReportRepository:
             ):
                 _integrity_failure()
 
-            flags = os.O_RDONLY | os.O_NOFOLLOW
-            if hasattr(os, "O_CLOEXEC"):
-                flags |= os.O_CLOEXEC
             descriptor = os.open(
                 receipt.canonical_name,
                 flags,
@@ -1428,6 +1464,18 @@ class _FileReportRepository:
         operation_id: str,
         expected_system_id: str,
     ) -> SavedReportDetail:
+        selected = self._reread_stored_report(
+            stored,
+            expected_system_id=expected_system_id,
+        )
+        return _project_detail(selected, operation_id=operation_id)
+
+    def _reread_stored_report(
+        self,
+        stored: _StoredReport,
+        *,
+        expected_system_id: str,
+    ) -> _ValidatedCandidate:
         root_state = self._resolved_root(missing_is_empty=False)
         if not isinstance(root_state, _TrustedRoot):
             _integrity_failure()
@@ -1463,9 +1511,60 @@ class _FileReportRepository:
             if selected is None:
                 _integrity_failure()
             self._revalidate_trusted_root(stored.trusted_root)
-            return _project_detail(selected, operation_id=operation_id)
+            return selected
         finally:
             root_handle.close()
+
+    def read_trusted_material(
+        self,
+        snapshot: _ReportCatalogSnapshot,
+        *,
+        report_id: ReportId,
+        expected_system_id: str,
+    ) -> _TrustedReportMaterial:
+        if (
+            type(snapshot) is not _ReportCatalogSnapshot
+            or snapshot.repository is not self
+            or type(report_id) is not ReportId
+        ):
+            _integrity_failure()
+        try:
+            _system_id(expected_system_id)
+        except (TypeError, ValueError):
+            _integrity_failure()
+        if snapshot.completeness != ReportCatalogCompleteness.COMPLETE:
+            _integrity_failure()
+        stored = snapshot.find(report_id)
+        if stored is None:
+            _not_found_failure()
+        candidate = self._reread_stored_report(
+            stored,
+            expected_system_id=expected_system_id,
+        )
+        digest = candidate.report_id.value.removeprefix("report:")
+        if (
+            candidate.report_id != report_id
+            or candidate.system_id != expected_system_id
+            or candidate.summary.system_id != expected_system_id
+            or candidate.summary.report_id != candidate.report_id
+            or candidate.summary.generated_at != candidate.generated_at
+            or candidate.summary.schema_version
+            != candidate.normalized_report.schema_version
+            or hashlib.sha256(candidate.canonical_bytes).hexdigest() != digest
+        ):
+            _integrity_failure()
+        try:
+            return _TrustedReportMaterial(
+                report_id=candidate.report_id,
+                canonical_digest=digest,
+                canonical_bytes=candidate.canonical_bytes,
+                normalized_report=candidate.normalized_report,
+                system_id=candidate.system_id,
+                schema_version=candidate.normalized_report.schema_version,
+                generated_at=candidate.generated_at,
+            )
+        except (TypeError, ValueError):
+            _integrity_failure()
 
 
 def _default_report_repository() -> _ReportRepositoryPort:

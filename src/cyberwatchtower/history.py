@@ -1,6 +1,9 @@
 import json
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 
 from .finding_identity import finding_identity
 from .report_contracts import (
@@ -11,6 +14,118 @@ from .report_contracts import (
     report_schema_version,
 )
 from .scoring_report import scoring_version_from_score
+
+
+_FindingT = TypeVar("_FindingT")
+
+
+class _DuplicateFindingIdentity(ValueError):
+    """Signal ambiguous semantic input without selecting an arbitrary winner."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ReportComparisonSemantics:
+    previous_score: int
+    current_score: int
+    previous_scoring_version: str
+    current_scoring_version: str
+    previous_risk: str
+    current_risk: str
+    score_change: int | None
+    score_trend: str
+    added_findings: tuple[object, ...]
+    resolved_findings: tuple[object, ...]
+    uncertain_findings: tuple[object, ...]
+
+
+def _finding_index(
+    findings: Iterable[_FindingT],
+    *,
+    identity_of: Callable[[_FindingT], str],
+    reject_duplicate_identities: bool,
+) -> dict[str, _FindingT]:
+    indexed: dict[str, _FindingT] = {}
+    for finding in findings:
+        identity = identity_of(finding)
+        if reject_duplicate_identities and identity in indexed:
+            raise _DuplicateFindingIdentity(identity)
+        indexed[identity] = finding
+    return indexed
+
+
+def _compare_report_semantics(
+    *,
+    previous_score: int,
+    current_score: int,
+    previous_scoring_version: str,
+    current_scoring_version: str,
+    previous_risk: str,
+    current_risk: str,
+    previous_findings: Iterable[_FindingT],
+    current_findings: Iterable[_FindingT],
+    current_coverage: Mapping | None,
+    current_assessment_domains: object | None,
+    identity_of: Callable[[_FindingT], str],
+    source_of: Callable[[_FindingT], object],
+    reject_duplicate_identities: bool,
+) -> _ReportComparisonSemantics:
+    """Compare already supplied observations without loading or filtering reports."""
+
+    if previous_scoring_version != current_scoring_version:
+        score_change = None
+        score_trend = "INCOMPARABLE"
+    else:
+        score_change = current_score - previous_score
+        score_trend = (
+            "IMPROVED"
+            if score_change > 0
+            else "DECLINED"
+            if score_change < 0
+            else "UNCHANGED"
+        )
+
+    previous_index = _finding_index(
+        previous_findings,
+        identity_of=identity_of,
+        reject_duplicate_identities=reject_duplicate_identities,
+    )
+    current_index = _finding_index(
+        current_findings,
+        identity_of=identity_of,
+        reject_duplicate_identities=reject_duplicate_identities,
+    )
+    added_identities = set(current_index) - set(previous_index)
+    disappeared_identities = set(previous_index) - set(current_index)
+    resolved_identities = {
+        identity
+        for identity in disappeared_identities
+        if coverage_complete_for_source(
+            source_of(previous_index[identity]),
+            current_coverage,
+            current_assessment_domains,
+        )
+    }
+    uncertain_identities = disappeared_identities - resolved_identities
+
+    return _ReportComparisonSemantics(
+        previous_score=previous_score,
+        current_score=current_score,
+        previous_scoring_version=previous_scoring_version,
+        current_scoring_version=current_scoring_version,
+        previous_risk=previous_risk,
+        current_risk=current_risk,
+        score_change=score_change,
+        score_trend=score_trend,
+        added_findings=tuple(
+            current_index[identity] for identity in sorted(added_identities)
+        ),
+        resolved_findings=tuple(
+            previous_index[identity] for identity in sorted(resolved_identities)
+        ),
+        uncertain_findings=tuple(
+            previous_index[identity] for identity in sorted(uncertain_identities)
+        ),
+    )
 
 
 def _report_timestamp(report: dict, report_path: Path) -> float:
@@ -82,6 +197,7 @@ def load_reports(
     reports_with_timestamps.sort(key=lambda item: (item[0], item[1]))
     return [item[2] for item in reports_with_timestamps]
 
+
 def compare_reports(previous: dict, current: dict) -> dict:
     """Compare two CyberWatchtower reports."""
 
@@ -93,56 +209,21 @@ def compare_reports(previous: dict, current: dict) -> dict:
     previous_scoring_version = scoring_version_from_score(previous_score).value
     current_scoring_version = scoring_version_from_score(current_score).value
 
-    if previous_scoring_version != current_scoring_version:
-        change = None
-        trend = "SCORING_VERSION_CHANGED"
-    else:
-        change = new_score - old_score
-        if change > 0:
-            trend = "IMPROVED"
-        elif change < 0:
-            trend = "DECLINED"
-        else:
-            trend = "UNCHANGED"
-
-    previous_findings = {
-        finding_identity(finding): finding
-        for finding in previous.get("findings", [])
-    }
-
-    current_findings = {
-        finding_identity(finding): finding
-        for finding in current.get("findings", [])
-    }
-
-    new_identities = set(current_findings) - set(previous_findings)
-    resolved_identities = set(previous_findings) - set(current_findings)
-
-    confirmed_resolved_identities = {
-        identity
-        for identity in resolved_identities
-        if coverage_complete_for_source(
-            previous_findings[identity].get("source"),
-            current.get("coverage"),
-            current.get("assessment_domains"),
-        )
-    }
-    uncertain_identities = resolved_identities - confirmed_resolved_identities
-
-    new_findings = [
-        current_findings[identity]
-        for identity in sorted(new_identities)
-    ]
-
-    resolved_findings = [
-        previous_findings[identity]
-        for identity in sorted(confirmed_resolved_identities)
-    ]
-
-    uncertain_findings = [
-        previous_findings[identity]
-        for identity in sorted(uncertain_identities)
-    ]
+    semantics = _compare_report_semantics(
+        previous_score=old_score,
+        current_score=new_score,
+        previous_scoring_version=previous_scoring_version,
+        current_scoring_version=current_scoring_version,
+        previous_risk=previous_score.get("risk_level", "UNKNOWN"),
+        current_risk=current_score.get("risk_level", "UNKNOWN"),
+        previous_findings=previous.get("findings", []),
+        current_findings=current.get("findings", []),
+        current_coverage=current.get("coverage"),
+        current_assessment_domains=current.get("assessment_domains"),
+        identity_of=finding_identity,
+        source_of=lambda finding: finding.get("source"),
+        reject_duplicate_identities=False,
+    )
 
     return {
         "previous_report_schema_version": report_schema_version(previous),
@@ -151,14 +232,16 @@ def compare_reports(previous: dict, current: dict) -> dict:
         "current_score": new_score,
         "previous_scoring_version": previous_scoring_version,
         "current_scoring_version": current_scoring_version,
-        "scoring_methodology_changed": (
-            previous_scoring_version != current_scoring_version
+        "scoring_methodology_changed": semantics.score_trend == "INCOMPARABLE",
+        "change": semantics.score_change,
+        "trend": (
+            "SCORING_VERSION_CHANGED"
+            if semantics.score_trend == "INCOMPARABLE"
+            else semantics.score_trend
         ),
-        "change": change,
-        "trend": trend,
-        "previous_risk": previous_score.get("risk_level", "UNKNOWN"),
-        "current_risk": current_score.get("risk_level", "UNKNOWN"),
-        "new_findings": new_findings,
-        "resolved_findings": resolved_findings,
-        "uncertain_findings": uncertain_findings,
+        "previous_risk": semantics.previous_risk,
+        "current_risk": semantics.current_risk,
+        "new_findings": list(semantics.added_findings),
+        "resolved_findings": list(semantics.resolved_findings),
+        "uncertain_findings": list(semantics.uncertain_findings),
     }

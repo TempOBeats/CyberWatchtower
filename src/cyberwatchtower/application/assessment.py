@@ -25,20 +25,32 @@ from cyberwatchtower.scoring_report import validate_serialized_security_score
 from .contracts import (
     ApplicationFinding,
     AssessmentAssuranceSummary,
+    CompareSavedReportsRequest,
     CurrentSystemAssessmentRequest,
     CurrentSystemAssessmentResult,
     DomainCoverage,
     FirewallTechnologySummary,
     GetLatestSavedReportRequest,
+    GetFindingTimelineRequest,
+    GetMemoryHealthRequest,
+    GetScoreHistoryRequest,
     GetSavedReportRequest,
+    IngestSavedReportIntoMemoryRequest,
+    FindingTimelineResult,
+    ListRecurringFindingsRequest,
     ListSavedReportsRequest,
+    MemoryHealthResult,
     ProjectionNotice,
     ProjectionNoticeCode,
     ReportCatalogCompleteness,
     ReportId,
+    RecurringFindingsResult,
     SavedCurrentSystemAssessmentResult,
+    SavedReportComparisonResult,
     SavedReportCatalog,
     SavedReportDetail,
+    SavedReportMemoryIngestionResult,
+    ScoreHistoryResult,
     SecurityRiskLevel,
     SecurityScore,
     SeverityCount,
@@ -53,6 +65,8 @@ from .errors import (
     CyberWatchtowerApplicationError,
 )
 from ._privacy import _project_evidence, _required_text_is_sensitive
+from . import _history
+from . import _memory
 from . import reports as _reports
 
 
@@ -171,6 +185,147 @@ def _report_application_error(
         code=code,
         message=messages[code],
         retryable=False,
+        component=component,
+        operation_id=operation_id,
+    ))
+
+
+def _history_application_error(
+    operation_id: str,
+    code: ApplicationErrorCode,
+    component: ApplicationComponent,
+) -> CyberWatchtowerApplicationError:
+    messages = {
+        ApplicationErrorCode.INVALID_REQUEST: (
+            "The saved-report comparison request is invalid."
+        ),
+        ApplicationErrorCode.NOT_FOUND: (
+            "A requested saved report was not found."
+        ),
+        ApplicationErrorCode.PERMISSION_DENIED: (
+            "Saved reports could not be compared because access was denied."
+        ),
+        ApplicationErrorCode.COMPATIBILITY_FAILURE: (
+            "A saved report could not be represented for comparison."
+        ),
+        ApplicationErrorCode.INTEGRITY_FAILURE: (
+            "Saved-report comparison integrity could not be established."
+        ),
+        ApplicationErrorCode.STORAGE_FAILURE: (
+            "Saved reports could not be read for comparison."
+        ),
+        ApplicationErrorCode.PRIVACY_POLICY_BLOCKED: (
+            "Saved-report comparison data could not cross the privacy boundary."
+        ),
+        ApplicationErrorCode.INTERNAL_FAILURE: (
+            "The saved-report comparison could not be completed."
+        ),
+    }
+    if code not in messages:
+        code = ApplicationErrorCode.INTERNAL_FAILURE
+        component = ApplicationComponent.STORAGE
+    return CyberWatchtowerApplicationError(ApplicationFailure(
+        code=code,
+        message=messages[code],
+        retryable=False,
+        component=component,
+        operation_id=operation_id,
+    ))
+
+
+def _memory_application_error(
+    operation_id: str,
+    code: ApplicationErrorCode,
+    component: ApplicationComponent,
+    *,
+    retryable: bool = False,
+) -> CyberWatchtowerApplicationError:
+    messages = {
+        ApplicationErrorCode.INVALID_REQUEST: (
+            "The saved-report Memory ingestion request is invalid."
+        ),
+        ApplicationErrorCode.NOT_FOUND: (
+            "The requested saved report was not found."
+        ),
+        ApplicationErrorCode.COMPONENT_UNAVAILABLE: (
+            "Persistent Security Memory is disabled."
+        ),
+        ApplicationErrorCode.PERMISSION_DENIED: (
+            "Persistent Security Memory could not be accessed."
+        ),
+        ApplicationErrorCode.COMPATIBILITY_FAILURE: (
+            "Persistent Security Memory is not compatible with this application."
+        ),
+        ApplicationErrorCode.INTEGRITY_FAILURE: (
+            "Saved-report Memory ingestion integrity could not be established."
+        ),
+        ApplicationErrorCode.STORAGE_FAILURE: (
+            "Persistent Security Memory could not store the saved report."
+        ),
+        ApplicationErrorCode.PRIVACY_POLICY_BLOCKED: (
+            "Saved-report Memory data could not cross the privacy boundary."
+        ),
+        ApplicationErrorCode.INTERNAL_FAILURE: (
+            "Saved-report Memory ingestion could not be completed."
+        ),
+    }
+    if code not in messages:
+        code = ApplicationErrorCode.INTERNAL_FAILURE
+        component = ApplicationComponent.STORAGE
+        retryable = False
+    return CyberWatchtowerApplicationError(ApplicationFailure(
+        code=code,
+        message=messages[code],
+        retryable=retryable,
+        component=component,
+        operation_id=operation_id,
+    ))
+
+
+def _memory_query_application_error(
+    operation_id: str,
+    code: ApplicationErrorCode,
+    component: ApplicationComponent,
+    *,
+    retryable: bool = False,
+) -> CyberWatchtowerApplicationError:
+    messages = {
+        ApplicationErrorCode.INVALID_REQUEST: (
+            "The Memory history request is invalid."
+        ),
+        ApplicationErrorCode.NOT_FOUND: (
+            "The requested Memory history item was not found."
+        ),
+        ApplicationErrorCode.COMPONENT_UNAVAILABLE: (
+            "Persistent Security Memory is unavailable."
+        ),
+        ApplicationErrorCode.PERMISSION_DENIED: (
+            "Persistent Security Memory could not be read."
+        ),
+        ApplicationErrorCode.COMPATIBILITY_FAILURE: (
+            "Persistent Security Memory requires a compatible schema."
+        ),
+        ApplicationErrorCode.INTEGRITY_FAILURE: (
+            "Persistent Security Memory integrity could not be established."
+        ),
+        ApplicationErrorCode.STORAGE_FAILURE: (
+            "Persistent Security Memory could not be read."
+        ),
+        ApplicationErrorCode.PRIVACY_POLICY_BLOCKED: (
+            "Memory history data could not cross the privacy boundary."
+        ),
+        ApplicationErrorCode.INTERNAL_FAILURE: (
+            "The Memory history operation could not be completed."
+        ),
+    }
+    if code not in messages:
+        code = ApplicationErrorCode.INTERNAL_FAILURE
+        component = ApplicationComponent.STORAGE
+        retryable = False
+    return CyberWatchtowerApplicationError(ApplicationFailure(
+        code=code,
+        message=messages[code],
+        retryable=retryable,
         component=component,
         operation_id=operation_id,
     ))
@@ -546,10 +701,17 @@ def _authoritative_system_id(raw: object) -> str:
 class CyberWatchtowerApplication:
     """Single unprivileged facade for supported application use cases."""
 
-    __slots__ = ()
+    __slots__ = ("_memory_factory", "_memory_factory_resolved")
 
     def __init__(self) -> None:
-        pass
+        self._memory_factory = None
+        self._memory_factory_resolved = False
+
+    def _resolved_memory_factory(self):
+        if not self._memory_factory_resolved:
+            self._memory_factory = _memory._default_memory_factory()
+            self._memory_factory_resolved = True
+        return self._memory_factory
 
     def assess_current_system(
         self,
@@ -598,6 +760,349 @@ class CyberWatchtowerApplication:
             )
         except Exception:
             public_error = _report_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def compare_saved_reports(
+        self,
+        request: CompareSavedReportsRequest,
+    ) -> SavedReportComparisonResult:
+        operation_id, valid = _history._start_history_operation(
+            request,
+            _history._valid_compare_saved_reports_request,
+        )
+        if not valid:
+            raise _history_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            repository = _reports._default_report_repository()
+            snapshot = repository.catalog_for_system(request.system_id)
+            if snapshot.completeness == ReportCatalogCompleteness.INCOMPLETE:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.INTEGRITY_FAILURE,
+                    ApplicationComponent.STORAGE,
+                )
+            if snapshot.find(request.previous_report_id) is None:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.NOT_FOUND,
+                    ApplicationComponent.STORAGE,
+                )
+            if snapshot.find(request.current_report_id) is None:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.NOT_FOUND,
+                    ApplicationComponent.STORAGE,
+                )
+            previous = repository.read_trusted_material(
+                snapshot,
+                report_id=request.previous_report_id,
+                expected_system_id=request.system_id,
+            )
+            current = repository.read_trusted_material(
+                snapshot,
+                report_id=request.current_report_id,
+                expected_system_id=request.system_id,
+            )
+            if (
+                previous.report_id != request.previous_report_id
+                or current.report_id != request.current_report_id
+            ):
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.INTEGRITY_FAILURE,
+                    ApplicationComponent.STORAGE,
+                )
+            return _history._compare_trusted_reports(
+                operation_id=operation_id,
+                system_id=request.system_id,
+                previous=previous,
+                current=current,
+            )
+        except _reports._ReportOperationFailure as failure:
+            public_error = _history_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        except _history._HistoryOperationFailure as failure:
+            public_error = _history_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        except Exception:
+            public_error = _history_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def ingest_saved_report_into_memory(
+        self,
+        request: IngestSavedReportIntoMemoryRequest,
+    ) -> SavedReportMemoryIngestionResult:
+        operation_id, valid = _history._start_history_operation(
+            request,
+            _memory._valid_ingest_saved_report_request,
+        )
+        if not valid:
+            raise _memory_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            repository = _reports._default_report_repository()
+            snapshot = repository.catalog_for_system(request.system_id)
+            if snapshot.completeness == ReportCatalogCompleteness.INCOMPLETE:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.INTEGRITY_FAILURE,
+                    ApplicationComponent.STORAGE,
+                )
+            if snapshot.find(request.report_id) is None:
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.NOT_FOUND,
+                    ApplicationComponent.STORAGE,
+                )
+            material = repository.read_trusted_material(
+                snapshot,
+                report_id=request.report_id,
+                expected_system_id=request.system_id,
+            )
+            if (
+                material.report_id != request.report_id
+                or material.system_id != request.system_id
+            ):
+                raise _reports._ReportOperationFailure(
+                    ApplicationErrorCode.INTEGRITY_FAILURE,
+                    ApplicationComponent.STORAGE,
+                )
+            memory_factory = self._resolved_memory_factory()
+            if memory_factory is None:
+                raise _memory._MemoryOperationFailure(
+                    ApplicationErrorCode.COMPONENT_UNAVAILABLE
+                )
+            port = _memory._open_writable(memory_factory)
+            try:
+                record = _memory._ingest_material(port, material)
+            finally:
+                port.close()
+            return SavedReportMemoryIngestionResult(
+                operation_id=operation_id,
+                status=record.status,
+                report_id=material.report_id,
+                system_id=material.system_id,
+                schema_version=record.schema_version,
+            )
+        except _reports._ReportOperationFailure as failure:
+            public_error = _memory_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+            )
+        except _memory._MemoryOperationFailure as failure:
+            public_error = _memory_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+                retryable=failure.retryable,
+            )
+        except Exception:
+            public_error = _memory_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def list_recurring_findings(
+        self,
+        request: ListRecurringFindingsRequest,
+    ) -> RecurringFindingsResult:
+        operation_id, valid = _history._start_history_operation(
+            request,
+            _memory._valid_list_recurring_findings_request,
+        )
+        if not valid:
+            raise _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            memory_factory = self._resolved_memory_factory()
+            if memory_factory is None:
+                raise _memory._MemoryOperationFailure(
+                    ApplicationErrorCode.COMPONENT_UNAVAILABLE
+                )
+            port = _memory._open_read_only(memory_factory)
+            try:
+                page = port.recurring_findings(
+                    system_id=request.system_id,
+                    limit=request.limit,
+                    active_only=request.active_only,
+                )
+            finally:
+                port.close()
+            return _memory._project_recurring_result(
+                operation_id,
+                request.system_id,
+                page,
+            )
+        except _memory._MemoryOperationFailure as failure:
+            public_error = _memory_query_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+                retryable=failure.retryable,
+            )
+        except Exception:
+            public_error = _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def get_finding_timeline(
+        self,
+        request: GetFindingTimelineRequest,
+    ) -> FindingTimelineResult:
+        operation_id, valid = _history._start_history_operation(
+            request,
+            _memory._valid_get_finding_timeline_request,
+        )
+        if not valid:
+            raise _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            memory_factory = self._resolved_memory_factory()
+            if memory_factory is None:
+                raise _memory._MemoryOperationFailure(
+                    ApplicationErrorCode.COMPONENT_UNAVAILABLE
+                )
+            port = _memory._open_read_only(memory_factory)
+            try:
+                timeline = port.finding_timeline(
+                    system_id=request.system_id,
+                    finding_id=request.finding_id,
+                    limit=request.limit,
+                )
+            finally:
+                port.close()
+            if timeline is None:
+                raise _memory._MemoryOperationFailure(ApplicationErrorCode.NOT_FOUND)
+            return _memory._project_timeline_result(
+                operation_id,
+                request.system_id,
+                request.finding_id,
+                timeline,
+            )
+        except _memory._MemoryOperationFailure as failure:
+            public_error = _memory_query_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+                retryable=failure.retryable,
+            )
+        except Exception:
+            public_error = _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def get_score_history(
+        self,
+        request: GetScoreHistoryRequest,
+    ) -> ScoreHistoryResult:
+        operation_id, valid = _history._start_history_operation(
+            request,
+            _memory._valid_get_score_history_request,
+        )
+        if not valid:
+            raise _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            memory_factory = self._resolved_memory_factory()
+            if memory_factory is None:
+                raise _memory._MemoryOperationFailure(
+                    ApplicationErrorCode.COMPONENT_UNAVAILABLE
+                )
+            port = _memory._open_read_only(memory_factory)
+            try:
+                series = port.score_history(
+                    system_id=request.system_id,
+                    start_at=request.start_at,
+                    end_at=request.end_at,
+                    limit=request.limit,
+                    scoring_version=request.scoring_version,
+                )
+            finally:
+                port.close()
+            return _memory._project_score_result(
+                operation_id,
+                request.system_id,
+                series,
+            )
+        except _memory._MemoryOperationFailure as failure:
+            public_error = _memory_query_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+                retryable=failure.retryable,
+            )
+        except Exception:
+            public_error = _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+                ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def get_memory_health(
+        self,
+        request: GetMemoryHealthRequest,
+    ) -> MemoryHealthResult:
+        operation_id, valid = _history._start_history_operation(
+            request,
+            _memory._valid_get_memory_health_request,
+        )
+        if not valid:
+            raise _memory_query_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+                ApplicationComponent.APPLICATION,
+            )
+        try:
+            memory_factory = self._resolved_memory_factory()
+            health = (
+                _memory._disabled_health()
+                if memory_factory is None
+                else memory_factory.inspect_health()
+            )
+            return _memory._project_health_result(operation_id, health)
+        except _memory._MemoryOperationFailure as failure:
+            public_error = _memory_query_application_error(
+                operation_id,
+                failure.code,
+                failure.component,
+                retryable=failure.retryable,
+            )
+        except Exception:
+            public_error = _memory_query_application_error(
                 operation_id,
                 ApplicationErrorCode.INTERNAL_FAILURE,
                 ApplicationComponent.STORAGE,

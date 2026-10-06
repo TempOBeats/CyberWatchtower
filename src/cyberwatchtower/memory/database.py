@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -188,8 +189,8 @@ def validate_memory_database(connection: sqlite3.Connection) -> None:
             raise MemoryIntegrityError(
                 "Memory score history contains an unsupported scoring version."
             )
-        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
-        if violations:
+        violation = connection.execute("PRAGMA foreign_key_check").fetchone()
+        if violation is not None:
             raise MemoryIntegrityError("Memory schema contains foreign-key violations.")
         missing_occurrence_ids = connection.execute(
             """SELECT COUNT(*) FROM finding_occurrences
@@ -242,30 +243,80 @@ def open_memory_database(
         raise
 
 
-def open_memory_database_readonly(path: str | Path) -> MemoryDatabase:
-    """Open an existing current-schema database without migrations or writes."""
+def _open_memory_database_readonly_unvalidated(path: str | Path) -> MemoryDatabase:
+    """Open one existing database read-only without migration or schema writes."""
+
     database_path = Path(path)
-    if database_path.is_symlink() or not database_path.is_file():
+    try:
+        mode = os.stat(database_path, follow_symlinks=False).st_mode
+    except FileNotFoundError:
+        raise MemoryUnavailable(
+            "Persistent Security Memory is unavailable."
+        ) from None
+    except PermissionError:
+        raise
+    except OSError:
+        raise MemoryUnavailable(
+            "Persistent Security Memory is unavailable."
+        ) from None
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
         raise MemoryUnavailable("Persistent Security Memory is unavailable.")
     try:
         connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS}")
         if hasattr(connection, "enable_load_extension"):
             connection.enable_load_extension(False)
-        validate_memory_database(connection)
-        migration_count = int(connection.execute(
-            "SELECT COUNT(*) FROM schema_migrations").fetchone()[0])
-        return MemoryDatabase(database_path, connection, MemoryDatabaseInfo(
-            database_path, CURRENT_MEMORY_SCHEMA_VERSION, migration_count, True,
-            DEFAULT_BUSY_TIMEOUT_MS,
-        ), True)
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        return MemoryDatabase(
+            database_path,
+            connection,
+            MemoryDatabaseInfo(
+                database_path,
+                version,
+                0,
+                True,
+                DEFAULT_BUSY_TIMEOUT_MS,
+            ),
+            True,
+        )
     except MemoryErrorBase:
         if "connection" in locals():
             connection.close()
         raise
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).casefold() or "busy" in str(exc).casefold():
+            if "connection" in locals():
+                connection.close()
+            raise MemoryLocked("Persistent Security Memory is locked.") from exc
+        if "connection" in locals():
+            connection.close()
+        raise MemoryUnavailable("Persistent Security Memory is unavailable.") from exc
     except sqlite3.DatabaseError as exc:
         if "connection" in locals():
             connection.close()
         raise MemoryCorrupt("Persistent Security Memory is not readable.") from exc
+
+
+def open_memory_database_readonly(path: str | Path) -> MemoryDatabase:
+    """Open an existing current-schema database without migrations or writes."""
+
+    database = _open_memory_database_readonly_unvalidated(path)
+    try:
+        validate_memory_database(database.connection)
+        migration_count = int(database.connection.execute(
+            "SELECT COUNT(*) FROM schema_migrations"
+        ).fetchone()[0])
+        database.info = MemoryDatabaseInfo(
+            database.path,
+            CURRENT_MEMORY_SCHEMA_VERSION,
+            migration_count,
+            True,
+            DEFAULT_BUSY_TIMEOUT_MS,
+        )
+        return database
+    except Exception:
+        database.close()
+        raise

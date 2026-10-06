@@ -12,6 +12,7 @@ from cyberwatchtower.report_contracts import (
 )
 
 from .database import MemoryDatabase
+from .errors import MemoryCorrupt, MemoryIntegrityError, MemoryLocked, MemoryUnavailable
 from .ingestion_models import (
     DiagnosticSeverity,
     IngestionDiagnostic,
@@ -276,6 +277,237 @@ def _write_finding(
     )
 
 
+def _native_resolution(report: NormalizedReport, system_id: str) -> LegacyIdentityResolution:
+    if report.native_system_id != system_id:
+        raise MemoryIntegrityError("Trusted report system identity is inconsistent.")
+    return LegacyIdentityResolution(
+        LegacyIdentityState.NATIVE_SYSTEM_ID,
+        system_id,
+        report.hostname,
+        LegacyLinkPolicy.REQUIRE_NATIVE_SYSTEM_ID,
+        "The trusted report contains an authoritative stable system_id.",
+    )
+
+
+def _expected_score_row(report: NormalizedReport) -> tuple[object, ...]:
+    counts = dict(report.score.counts)
+    if (
+        set(counts) != {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
+        or any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+               for value in counts.values())
+        or isinstance(report.score.score, bool)
+        or not isinstance(report.score.score, int)
+        or not 0 <= report.score.score <= 100
+        or report.score.scoring_version not in {"1", "2"}
+        or not isinstance(report.score.risk_level, str)
+        or not report.score.risk_level
+    ):
+        raise MemoryIntegrityError("Trusted report score metadata is inconsistent.")
+    return (
+        report.score.score,
+        report.score.risk_level,
+        counts["CRITICAL"],
+        counts["HIGH"],
+        counts["MEDIUM"],
+        counts["LOW"],
+        counts["INFO"],
+        report.generated_at,
+        MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
+        report.score.scoring_version,
+    )
+
+
+def _verify_duplicate(
+    connection: sqlite3.Connection,
+    *,
+    row: sqlite3.Row,
+    report: NormalizedReport,
+    system_id: str,
+    digest: str,
+) -> None:
+    report_id = _opaque_id("report", system_id, digest)
+    expected_report = (
+        report_id,
+        system_id,
+        report.generated_at,
+        report.schema_version,
+        digest,
+        MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
+        LegacyIdentityState.NATIVE_SYSTEM_ID.value,
+        "COMPLETE",
+        json.dumps(dict(report.coverage), sort_keys=True),
+    )
+    actual_report = (
+        row["report_id"], row["system_id"], row["generated_at"],
+        row["report_schema_version"], row["content_digest"], row["provenance"],
+        row["legacy_identity_state"], row["ingestion_status"], row["coverage_json"],
+    )
+    if actual_report != expected_report:
+        raise MemoryIntegrityError("Existing report identity contradicts trusted material.")
+
+    score = connection.execute(
+        """SELECT score,risk_level,critical_count,high_count,medium_count,
+                  low_count,info_count,observed_at,provenance,scoring_version
+           FROM score_history WHERE report_id=? AND system_id=?""",
+        (report_id, system_id),
+    ).fetchone()
+    if score is None or tuple(score) != _expected_score_row(report):
+        raise MemoryIntegrityError("Existing score history contradicts trusted material.")
+
+    occurrences = connection.execute(
+        """SELECT occurrence_id,finding_pk,stable_finding_id,observed_at,title,
+                  description,severity,recommendation,confidence,technique_id,
+                  source,kind,assessment_state,metadata_inferred,evidence_json,provenance
+           FROM finding_occurrences WHERE report_id=? AND system_id=?
+           ORDER BY stable_finding_id""",
+        (report_id, system_id),
+    ).fetchall()
+    expected_occurrences = []
+    for finding in sorted(report.findings, key=lambda item: item.finding_id):
+        finding_pk = _opaque_id("finding", system_id, finding.finding_id)
+        expected_occurrences.append((
+            _opaque_id("occurrence", report_id, finding.finding_id),
+            finding_pk,
+            finding.finding_id,
+            report.generated_at,
+            finding.title,
+            finding.description,
+            finding.severity,
+            finding.recommendation,
+            finding.confidence,
+            finding.technique_id,
+            finding.source,
+            finding.kind,
+            finding.assessment_state,
+            int(finding.metadata_inferred),
+            json.dumps(finding.evidence, ensure_ascii=False),
+            MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
+        ))
+    if [tuple(item) for item in occurrences] != expected_occurrences:
+        raise MemoryIntegrityError("Existing finding relationships contradict trusted material.")
+
+
+def _ingest_normalized(
+    database: MemoryDatabase,
+    *,
+    normalized: NormalizedReport,
+    digest: str,
+    resolution: LegacyIdentityResolution,
+    source_path: str | None,
+    source_filename: str | None,
+    omitted_evidence: int,
+    strict_duplicate: bool,
+) -> ReportIngestionResult:
+    connection = database.connection
+    system_id = resolution.system_id
+    if system_id is None:
+        raise MemoryIntegrityError("Resolved report identity is unavailable.")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        digest_owner = connection.execute(
+            "SELECT system_id, report_id FROM reports WHERE content_digest = ?",
+            (digest,),
+        ).fetchone()
+        if digest_owner is not None and digest_owner["system_id"] != system_id:
+            if strict_duplicate:
+                raise MemoryIntegrityError(
+                    "Trusted report digest is associated with another system."
+                )
+            connection.rollback()
+            return _result(
+                IngestionStatus.IDENTITY_CONFLICT,
+                system_id=system_id,
+                digest=digest,
+                schema_version=normalized.schema_version,
+                resolution=resolution,
+                diagnostics=(_diagnostic(
+                    "DIGEST_SYSTEM_CONFLICT",
+                    "This report digest is already associated with another system.",
+                ),),
+            )
+
+        duplicate = connection.execute(
+            """SELECT report_id,system_id,generated_at,report_schema_version,
+                      content_digest,provenance,legacy_identity_state,
+                      ingestion_status,coverage_json
+               FROM reports WHERE system_id = ? AND content_digest = ?""",
+            (system_id, digest),
+        ).fetchone()
+        if duplicate is not None:
+            if strict_duplicate:
+                _verify_duplicate(
+                    connection,
+                    row=duplicate,
+                    report=normalized,
+                    system_id=system_id,
+                    digest=digest,
+                )
+            connection.rollback()
+            return _result(
+                IngestionStatus.DUPLICATE,
+                report_id=duplicate["report_id"],
+                system_id=system_id,
+                digest=digest,
+                schema_version=normalized.schema_version,
+                resolution=resolution,
+                diagnostics=(_diagnostic(
+                    "DUPLICATE_REPORT",
+                    "The same canonical report is already present for this system.",
+                    severity=DiagnosticSeverity.INFO,
+                ),),
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        report_id = _opaque_id("report", system_id, digest)
+        _upsert_system(connection, normalized, resolution, now)
+        connection.execute(
+            """INSERT INTO reports
+               (report_id, system_id, generated_at, ingested_at,
+                report_schema_version, content_digest, source_path, source_filename,
+                provenance, legacy_identity_state, ingestion_status, coverage_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETE', ?)""",
+            (
+                report_id, system_id, normalized.generated_at, now,
+                normalized.schema_version, digest, source_path, source_filename,
+                MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
+                resolution.state.value,
+                json.dumps(dict(normalized.coverage), sort_keys=True),
+            ),
+        )
+        score = _expected_score_row(normalized)
+        connection.execute(
+            """INSERT INTO score_history
+               (report_id, system_id, score, risk_level, critical_count, high_count,
+                medium_count, low_count, info_count, observed_at, provenance,
+                scoring_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (report_id, system_id, *score),
+        )
+        for finding in normalized.findings:
+            _write_finding(connection, normalized, finding, system_id, report_id, now)
+        rebuild_lifecycle_in_transaction(connection, system_id)
+        connection.commit()
+        diagnostics = []
+        if omitted_evidence:
+            diagnostics.append(_diagnostic(
+                "EVIDENCE_OMITTED",
+                f"{omitted_evidence} unsafe or unsupported evidence item(s) were not persisted.",
+                severity=DiagnosticSeverity.WARNING,
+            ))
+        return _result(
+            IngestionStatus.INGESTED,
+            report_id=report_id,
+            system_id=system_id,
+            digest=digest,
+            schema_version=normalized.schema_version,
+            resolution=resolution,
+            diagnostics=diagnostics,
+        )
+    except Exception:
+        connection.rollback()
+        raise
+
+
 def ingest_report(
     database: MemoryDatabase,
     request: ReportIngestionRequest,
@@ -313,13 +545,15 @@ def ingest_report(
         connection.execute("BEGIN IMMEDIATE")
         resolution = _resolve_identity(connection, normalized, request)
         target_system_id = resolution.system_id or request.expected_system_id
-
         if target_system_id:
             digest_owner = connection.execute(
-                "SELECT system_id, report_id FROM reports WHERE content_digest = ?",
+                "SELECT system_id FROM reports WHERE content_digest=?",
                 (digest,),
             ).fetchone()
-            if digest_owner is not None and digest_owner["system_id"] != target_system_id:
+            if (
+                digest_owner is not None
+                and digest_owner["system_id"] != target_system_id
+            ):
                 connection.rollback()
                 return _result(
                     IngestionStatus.IDENTITY_CONFLICT,
@@ -332,7 +566,6 @@ def ingest_report(
                         "This report digest is already associated with another system.",
                     ),),
                 )
-
         if resolution.state == LegacyIdentityState.UNRESOLVED:
             connection.rollback()
             status = (
@@ -347,107 +580,16 @@ def ingest_report(
                 resolution=resolution,
                 diagnostics=(_diagnostic("IDENTITY_UNRESOLVED", resolution.reason),),
             )
-
-        system_id = resolution.system_id
-        duplicate = connection.execute(
-            "SELECT report_id FROM reports WHERE system_id = ? AND content_digest = ?",
-            (system_id, digest),
-        ).fetchone()
-        if duplicate is not None:
-            connection.rollback()
-            return _result(
-                IngestionStatus.DUPLICATE,
-                report_id=duplicate["report_id"],
-                system_id=system_id,
-                digest=digest,
-                schema_version=normalized.schema_version,
-                resolution=resolution,
-                diagnostics=(_diagnostic(
-                    "DUPLICATE_REPORT",
-                    "The same canonical report is already present for this system.",
-                    severity=DiagnosticSeverity.INFO,
-                ),),
-            )
-
-        now = datetime.now(timezone.utc).isoformat()
-        report_id = _opaque_id("report", system_id, digest)
-        _upsert_system(connection, normalized, resolution, now)
-        connection.execute(
-            """INSERT INTO reports
-               (report_id, system_id, generated_at, ingested_at,
-                report_schema_version, content_digest, source_path, source_filename,
-                provenance, legacy_identity_state, ingestion_status, coverage_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETE', ?)""",
-            (
-                report_id,
-                system_id,
-                normalized.generated_at,
-                now,
-                normalized.schema_version,
-                digest,
-                str(Path(request.path)),
-                Path(request.path).name,
-                MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
-                resolution.state.value,
-                json.dumps(dict(normalized.coverage), sort_keys=True),
-            ),
-        )
-        counts = dict(normalized.score.counts)
-        connection.execute(
-            """INSERT INTO score_history
-               (report_id, system_id, score, risk_level, critical_count, high_count,
-                medium_count, low_count, info_count, observed_at, provenance,
-                scoring_version)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                report_id,
-                system_id,
-                normalized.score.score,
-                normalized.score.risk_level,
-                counts["CRITICAL"],
-                counts["HIGH"],
-                counts["MEDIUM"],
-                counts["LOW"],
-                counts["INFO"],
-                normalized.generated_at,
-                MemoryProvenance.DETERMINISTIC_OBSERVATION.value,
-                normalized.score.scoring_version,
-            ),
-        )
-        for finding in normalized.findings:
-            _write_finding(
-                connection, normalized, finding, system_id, report_id, now
-            )
-        rebuild_lifecycle_in_transaction(connection, system_id)
-        connection.commit()
-        diagnostics = []
-        if omitted_evidence:
-            diagnostics.append(_diagnostic(
-                "EVIDENCE_OMITTED",
-                f"{omitted_evidence} unsafe or unsupported evidence item(s) were not persisted.",
-                severity=DiagnosticSeverity.WARNING,
-            ))
-        return _result(
-            IngestionStatus.INGESTED,
-            report_id=report_id,
-            system_id=system_id,
-            digest=digest,
-            schema_version=normalized.schema_version,
-            resolution=resolution,
-            diagnostics=diagnostics,
-        )
-    except sqlite3.Error as exc:
         connection.rollback()
-        return _result(
-            IngestionStatus.FAILED,
-            system_id=resolution.system_id if resolution else None,
+        return _ingest_normalized(
+            database,
+            normalized=normalized,
             digest=digest,
-            schema_version=normalized.schema_version,
             resolution=resolution,
-            diagnostics=(_diagnostic(
-                "TRANSACTION_FAILED",
-                "The report transaction failed and was rolled back.",
-            ),),
+            source_path=str(Path(request.path)),
+            source_filename=Path(request.path).name,
+            omitted_evidence=omitted_evidence,
+            strict_duplicate=False,
         )
     except Exception:
         connection.rollback()
@@ -462,3 +604,63 @@ def ingest_report(
                 "The report transaction failed and was rolled back.",
             ),),
         )
+
+
+def _ingest_trusted_report(
+    database: MemoryDatabase,
+    *,
+    public_report_id: str,
+    canonical_digest: str,
+    canonical_bytes: bytes,
+    normalized_report: NormalizedReport,
+    expected_system_id: str,
+    generated_at: datetime,
+) -> ReportIngestionResult:
+    """Atomically ingest pathless material already approved by the report repository."""
+
+    try:
+        if (
+            not isinstance(canonical_bytes, bytes)
+            or len(canonical_bytes) > MAX_REPORT_BYTES
+            or hashlib.sha256(canonical_bytes).hexdigest() != canonical_digest
+            or public_report_id != f"report:{canonical_digest}"
+            or not isinstance(normalized_report, NormalizedReport)
+            or normalized_report.native_system_id != expected_system_id
+            or normalized_report.schema_version == ""
+            or not isinstance(generated_at, datetime)
+            or generated_at.tzinfo is None
+            or generated_at.utcoffset() is None
+        ):
+            raise MemoryIntegrityError("Trusted report material is inconsistent.")
+        normalized_generated = datetime.fromisoformat(
+            normalized_report.generated_at.replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        if normalized_generated != generated_at.astimezone(timezone.utc):
+            raise MemoryIntegrityError("Trusted report chronology is inconsistent.")
+        finding_ids = tuple(item.finding_id for item in normalized_report.findings)
+        if len(finding_ids) != len(set(finding_ids)):
+            raise MemoryIntegrityError("Trusted report finding identities are not unique.")
+        _expected_score_row(normalized_report)
+        resolution = _native_resolution(normalized_report, expected_system_id)
+        return _ingest_normalized(
+            database,
+            normalized=normalized_report,
+            digest=canonical_digest,
+            resolution=resolution,
+            source_path=None,
+            source_filename=None,
+            omitted_evidence=0,
+            strict_duplicate=True,
+        )
+    except MemoryIntegrityError:
+        raise
+    except sqlite3.IntegrityError as exc:
+        raise MemoryIntegrityError("Trusted report ingestion contradicted Memory state.") from exc
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).casefold() or "busy" in str(exc).casefold():
+            raise MemoryLocked("Persistent Security Memory is locked.") from exc
+        raise MemoryUnavailable("Persistent Security Memory could not store the report.") from exc
+    except sqlite3.DatabaseError as exc:
+        raise MemoryCorrupt("Persistent Security Memory failed during ingestion.") from exc
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise MemoryIntegrityError("Trusted report material is inconsistent.") from exc

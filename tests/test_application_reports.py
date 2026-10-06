@@ -2423,6 +2423,196 @@ class ApplicationReportReadBoundaryTests(unittest.TestCase):
         self.assertEqual(catalog.completeness, ReportCatalogCompleteness.INCOMPLETE)
         self.assertEqual(catalog.diagnostics.symlink_count, 1)
 
+    def test_candidate_and_trusted_reread_regular_to_fifo_races_fail_without_read(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO fixtures are unavailable on this platform.")
+
+        for phase in ("catalog", "trusted_reread"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory, "reports")
+                report = _current_report()
+                candidate = _write_report(root, "report.json", report)
+                report_id = ReportId("report:" + canonical_report_digest(report))
+                repository = report_boundary._FileReportRepository(root)
+                snapshot = None
+                if phase == "trusted_reread":
+                    snapshot = repository.catalog_for_system("system:test")
+
+                original = candidate.with_suffix(".original")
+                real_open = os.open
+                opened_descriptors = []
+                replaced = False
+
+                def replace_with_fifo_before_open(path, flags, *, dir_fd=None):
+                    nonlocal replaced
+                    if path == candidate.name and dir_fd is not None and not replaced:
+                        self.assertTrue(flags & os.O_NOFOLLOW)
+                        self.assertTrue(flags & os.O_NONBLOCK)
+                        candidate.rename(original)
+                        os.mkfifo(candidate)
+                        replaced = True
+                        descriptor = real_open(path, flags, dir_fd=dir_fd)
+                        opened_descriptors.append(descriptor)
+                        return descriptor
+                    return real_open(path, flags, dir_fd=dir_fd)
+
+                with patch.object(
+                    report_boundary.os,
+                    "open",
+                    side_effect=replace_with_fifo_before_open,
+                ), patch.object(
+                    report_boundary.os,
+                    "fdopen",
+                    side_effect=AssertionError("raced FIFO must not be read"),
+                ):
+                    if phase == "catalog":
+                        result = repository.catalog_for_system("system:test")
+                        self.assertEqual(result.reports, ())
+                        self.assertEqual(
+                            result.completeness,
+                            ReportCatalogCompleteness.INCOMPLETE,
+                        )
+                        self.assertEqual(result.diagnostics.nonregular_count, 1)
+                    else:
+                        with self.assertRaises(
+                            report_boundary._ReportOperationFailure
+                        ) as caught:
+                            repository.read_trusted_material(
+                                snapshot,
+                                report_id=report_id,
+                                expected_system_id="system:test",
+                            )
+                        self.assertEqual(
+                            caught.exception.code,
+                            ApplicationErrorCode.INTEGRITY_FAILURE,
+                        )
+                        self.assertNotIn(str(root), repr(caught.exception))
+
+                self.assertTrue(replaced)
+                self.assertEqual(len(opened_descriptors), 1)
+                with self.assertRaises(OSError) as closed:
+                    os.fstat(opened_descriptors[0])
+                self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def test_publication_reread_regular_to_fifo_race_is_nonblocking_and_closed(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO fixtures are unavailable on this platform.")
+
+        real_save = report_boundary.reporting._save_json_report_with_receipt
+        real_open = os.open
+        receipts = []
+        opened_descriptors = []
+        published_name = None
+
+        def publish_then_replace_with_fifo(value, report_directory):
+            nonlocal published_name
+            receipt = real_save(value, report_directory)
+            published_name = receipt.canonical_name
+            receipt.path.rename(receipt.path.with_suffix(".original"))
+            os.mkfifo(receipt.path)
+            receipts.append((receipt, receipt.directory_descriptor))
+            return receipt
+
+        def observe_publication_open(path, flags, mode=0o777, *, dir_fd=None):
+            if path == published_name and dir_fd is not None:
+                self.assertTrue(flags & os.O_NOFOLLOW)
+                self.assertTrue(flags & os.O_NONBLOCK)
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                opened_descriptors.append(descriptor)
+                return descriptor
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory, "reports")
+            repository = report_boundary._FileReportRepository(root)
+            with patch.object(
+                report_boundary.reporting,
+                "_save_json_report_with_receipt",
+                side_effect=publish_then_replace_with_fifo,
+            ), patch.object(
+                report_boundary.os,
+                "open",
+                side_effect=observe_publication_open,
+            ), patch.object(
+                report_boundary.os,
+                "read",
+                side_effect=AssertionError("raced FIFO must not be read"),
+            ), self.assertRaises(
+                report_boundary._ReportOperationFailure
+            ) as caught:
+                repository.save_scanner_result(scanner_result())
+
+            self.assertEqual(
+                caught.exception.code,
+                ApplicationErrorCode.INTEGRITY_FAILURE,
+            )
+            self.assertNotIn(str(root), repr(caught.exception))
+            self.assertEqual(len(opened_descriptors), 1)
+            with self.assertRaises(OSError) as closed:
+                os.fstat(opened_descriptors[0])
+            self.assertEqual(closed.exception.errno, errno.EBADF)
+            receipt, directory_descriptor = receipts[0]
+            self.assertEqual(receipt.directory_descriptor, -1)
+            with self.assertRaises(OSError) as root_closed:
+                os.fstat(directory_descriptor)
+            self.assertEqual(root_closed.exception.errno, errno.EBADF)
+
+    def test_candidate_open_flags_fstat_before_read_and_missing_support_fails_closed(self):
+        real_open = os.open
+        real_fstat = os.fstat
+        real_fdopen = os.fdopen
+        candidate_descriptors = set()
+        events = []
+
+        def observe_open(path, flags, *, dir_fd=None):
+            descriptor = real_open(path, flags, dir_fd=dir_fd)
+            if path == "report.json" and dir_fd is not None:
+                self.assertTrue(flags & os.O_NOFOLLOW)
+                self.assertTrue(flags & os.O_NONBLOCK)
+                candidate_descriptors.add(descriptor)
+                events.append("open")
+            return descriptor
+
+        def observe_fstat(descriptor):
+            if descriptor in candidate_descriptors:
+                events.append("fstat")
+            return real_fstat(descriptor)
+
+        def observe_fdopen(descriptor, *args, **kwargs):
+            if descriptor in candidate_descriptors:
+                events.append("read")
+            return real_fdopen(descriptor, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory, "reports")
+            _write_report(root, "report.json", _current_report())
+            repository = report_boundary._FileReportRepository(root)
+            with patch.object(
+                report_boundary.os,
+                "open",
+                side_effect=observe_open,
+            ), patch.object(
+                report_boundary.os,
+                "fstat",
+                side_effect=observe_fstat,
+            ), patch.object(
+                report_boundary.os,
+                "fdopen",
+                side_effect=observe_fdopen,
+            ):
+                result = repository.catalog_for_system("system:test")
+            self.assertEqual(len(result.reports), 1)
+            self.assertEqual(events, ["open", "fstat", "read"])
+
+            with patch.object(report_boundary.os, "O_NONBLOCK", 0), self.assertRaises(
+                report_boundary._ReportOperationFailure
+            ) as caught:
+                repository.catalog_for_system("system:test")
+            self.assertEqual(
+                caught.exception.code,
+                ApplicationErrorCode.INTEGRITY_FAILURE,
+            )
+
     def test_descriptor_relative_read_error_graph_is_detached(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory, "reports")
