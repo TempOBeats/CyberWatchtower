@@ -3,6 +3,7 @@ import inspect
 import unittest
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
+from typing import Protocol
 from unittest import mock
 
 import cyberwatchtower.application as application
@@ -79,6 +80,26 @@ SYSTEM_ID = "system-1"
 PREVIOUS_ID = ReportId("report:" + "1" * 64)
 CURRENT_ID = ReportId("report:" + "2" * 64)
 NOW = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+
+def _owned_protocol_methods(protocol):
+    """Return methods declared by the protocol, excluding typing machinery."""
+
+    owned = {}
+    qualname_prefix = f"{protocol.__qualname__}."
+    for name, value in protocol.__dict__.items():
+        function = (
+            value.__func__
+            if isinstance(value, (classmethod, staticmethod))
+            else value
+        )
+        if (
+            inspect.isfunction(function)
+            and function.__module__ == protocol.__module__
+            and function.__qualname__.startswith(qualname_prefix)
+        ):
+            owned[name] = function
+    return owned
 
 
 def _finding(finding_id="finding-1", occurrence_count=2, last_seen_at=NOW):
@@ -541,28 +562,19 @@ class ApplicationHistoryContractTests(unittest.TestCase):
 
     def test_private_port_shapes_are_storage_neutral_and_explicitly_owned(self):
         self.assertEqual(
-            {
-                name for name, value in _MemoryPort.__dict__.items()
-                if inspect.isfunction(value)
-            },
+            set(_owned_protocol_methods(_MemoryPort)),
             {
                 "ingest_trusted_report", "recurring_findings",
                 "finding_timeline", "score_history", "health", "close",
-                "__init__",
             },
         )
         self.assertEqual(
-            {
-                name for name, value in _MemoryFactory.__dict__.items()
-                if inspect.isfunction(value)
-            },
-            {"open_read_only", "open_writable", "inspect_health", "__init__"},
+            set(_owned_protocol_methods(_MemoryFactory)),
+            {"open_read_only", "open_writable", "inspect_health"},
         )
         for protocol in (_MemoryPort, _MemoryFactory):
             annotations = []
-            for method in protocol.__dict__.values():
-                if not inspect.isfunction(method):
-                    continue
+            for method in _owned_protocol_methods(protocol).values():
                 signature = inspect.signature(method)
                 annotations.extend(
                     parameter.annotation
@@ -572,6 +584,19 @@ class ApplicationHistoryContractTests(unittest.TestCase):
             rendered = " ".join(str(value) for value in annotations)
             for prohibited in ("sqlite", "Connection", "Cursor", "Path"):
                 self.assertNotIn(prohibited, rendered)
+
+    def test_private_port_shape_rejects_owned_storage_specific_method(self):
+        class UnsafeStoragePort(Protocol):
+            def health(self):
+                ...
+
+            def open_database(self):
+                ...
+
+        owned = set(_owned_protocol_methods(UnsafeStoragePort))
+        self.assertEqual(owned, {"health", "open_database"})
+        with self.assertRaises(AssertionError):
+            self.assertEqual(owned, {"health"})
 
     def test_private_repository_seam_requires_snapshot_and_is_implemented_in_e4(self):
         signature = inspect.signature(
