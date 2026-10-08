@@ -16,6 +16,7 @@ APPLICATION = ROOT / "src" / "cyberwatchtower" / "application"
 PRODUCTION_FILES = (
     APPLICATION / "__init__.py",
     APPLICATION / "_capabilities.py",
+    APPLICATION / "_proposals.py",
     APPLICATION / "_history.py",
     APPLICATION / "_memory.py",
     APPLICATION / "_privacy.py",
@@ -60,6 +61,7 @@ class ApplicationBoundaryTests(unittest.TestCase):
             {path.name for path in APPLICATION.glob("*.py")},
             {
                 "_capabilities.py",
+                "_proposals.py",
                 "__init__.py", "_history.py", "_memory.py", "_privacy.py",
                 "contracts.py", "errors.py", "assessment.py", "reports.py",
             },
