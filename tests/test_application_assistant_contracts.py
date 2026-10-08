@@ -200,8 +200,9 @@ class ApplicationAssistantContractTests(unittest.TestCase):
                 self.assertIn("__slots__", dto.__dict__)
         request = ListCapabilitiesRequest()
         self.assertFalse(hasattr(request, "__dict__"))
-        with self.assertRaises((FrozenInstanceError, AttributeError)):
+        with self.assertRaises((FrozenInstanceError, AttributeError, TypeError)):
             request.value = "changed"
+        self.assertFalse(hasattr(request, "value"))
 
     def test_public_field_annotations_are_closed_and_immutable(self):
         prohibited = ("list", "dict", "set", "Mapping", "Any", "object", "Callable", "Path")
