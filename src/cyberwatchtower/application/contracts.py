@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import re
 import unicodedata
@@ -36,7 +36,55 @@ from cyberwatchtower.scoring_contracts import (
 _ASSESSMENT_OPERATION_ID = re.compile(r"^assessment:[0-9a-f]{32}$")
 _REPORT_OPERATION_ID = re.compile(r"^reportop:[0-9a-f]{32}$")
 _HISTORY_OPERATION_ID = re.compile(r"^historyop:[0-9a-f]{32}$")
+_ASSISTANT_OPERATION_ID = re.compile(r"^assistantop:[0-9a-f]{32}$")
+_PROPOSAL_ID = re.compile(r"^proposal:[0-9a-f]{32}$")
 _REPORT_ID = re.compile(r"^report:[0-9a-f]{64}$")
+_CAPABILITY_ID = re.compile(
+    r"^cyberwatchtower\.application\.[a-z][a-z0-9_]{0,95}$"
+)
+_CAPABILITY_VERSION = re.compile(r"^[1-9][0-9]{0,19}$")
+_STABLE_PRESENTATION_ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,127}$")
+_EFFECT_ID = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+_PARAMETER_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_INTEGER_PARAMETER = re.compile(r"^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$")
+_UTC_TIMESTAMP_PARAMETER = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+    r"[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$"
+)
+_URL_TARGET = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_WINDOWS_ROOT = re.compile(r"^[A-Za-z]:[\\/]")
+_PEM_PRIVATE_KEY_HEADER = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+    re.IGNORECASE,
+)
+_F_SENSITIVE_MARKERS = (
+    "api-key",
+    "api_key",
+    "apikey",
+    "authorization:",
+    "bearer ",
+    "command line",
+    "credential",
+    "cookie:",
+    "environment=",
+    "password",
+    "raw argv",
+    "stderr",
+    "token=",
+    "token:",
+)
+_F_COMMAND_MARKERS = (
+    "-----begin private key-----",
+    "-----begin rsa private key-----",
+    "-----begin ec private key-----",
+    "$(",
+    "`",
+    "sh -c",
+    "bash -c",
+    "cmd.exe",
+    "powershell",
+)
 SYSTEM_ID_MAX = 4096
 FINDING_ID_MAX = 512
 RECURRING_DEFAULT_LIMIT = 50
@@ -164,6 +212,100 @@ def _bounded_result(
     if returned_count != len(values):
         raise ValueError("returned_count must equal the returned tuple length.")
     _boolean(has_more, "has_more")
+
+
+def _f_text(value: object, field: str, maximum: int) -> None:
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise ValueError(f"{field} must be bounded non-empty text.")
+    if not value.strip():
+        raise ValueError(f"{field} cannot be blank.")
+    if not unicodedata.is_normalized("NFC", value):
+        raise ValueError(f"{field} must use Unicode NFC.")
+    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in value):
+        raise ValueError(f"{field} contains prohibited control characters.")
+
+
+def _f_system_id(value: object, field: str = "system_id") -> None:
+    _system_id(value, field)
+    if not unicodedata.is_normalized("NFC", value):
+        raise ValueError(f"{field} must use Unicode NFC.")
+
+
+def _closed(value: object, expected: type, field: str) -> None:
+    if not isinstance(value, expected):
+        raise TypeError(f"{field} must use the closed {expected.__name__} enum.")
+
+
+def _f_tuple(
+    value: object,
+    expected: type,
+    field: str,
+    *,
+    minimum: int = 0,
+    maximum: int,
+) -> None:
+    _typed_tuple(value, expected, field)
+    if not minimum <= len(value) <= maximum:
+        raise ValueError(f"{field} is outside the supported bound.")
+
+
+def _utc_datetime(value: object, field: str) -> None:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is not timezone.utc
+        or value.utcoffset() != timedelta(0)
+    ):
+        raise ValueError(f"{field} must use canonical UTC.")
+
+
+def _reject_unsafe_text(
+    value: str,
+    field: str,
+    *,
+    reject_url: bool = False,
+) -> None:
+    folded = value.casefold()
+    if any(marker in folded for marker in _F_SENSITIVE_MARKERS):
+        raise ValueError(f"{field} contains prohibited sensitive content.")
+    if any(marker in folded for marker in _F_COMMAND_MARKERS):
+        raise ValueError(f"{field} contains prohibited command or secret content.")
+    if _PEM_PRIVATE_KEY_HEADER.search(value) is not None:
+        raise ValueError(f"{field} contains prohibited command or secret content.")
+    if (
+        value.startswith(("/", "./", "../", "~", "\\\\"))
+        or "/../" in value
+        or "\\..\\" in value
+        or folded.startswith("file:")
+        or _WINDOWS_ROOT.match(value) is not None
+    ):
+        raise ValueError(f"{field} contains a prohibited path.")
+    if reject_url and _URL_TARGET.match(value) is not None:
+        raise ValueError(f"{field} contains a prohibited URL.")
+
+
+def _assistant_operation(value: object) -> None:
+    if not isinstance(value, str) or _ASSISTANT_OPERATION_ID.fullmatch(value) is None:
+        raise ValueError("assistant operation id has an invalid format.")
+
+
+def _capability_id(value: object) -> None:
+    if not isinstance(value, str) or _CAPABILITY_ID.fullmatch(value) is None:
+        raise ValueError("capability_id has an invalid format.")
+
+
+def _capability_version(value: object) -> None:
+    if not isinstance(value, str) or _CAPABILITY_VERSION.fullmatch(value) is None:
+        raise ValueError("capability_version has an invalid format.")
+
+
+def _digest(value: object, field: str) -> None:
+    if not isinstance(value, str) or _SHA256_DIGEST.fullmatch(value) is None:
+        raise ValueError(f"{field} must be a lowercase SHA-256 digest.")
+
+
+def _presentation_id(value: object, field: str) -> None:
+    if not isinstance(value, str) or _STABLE_PRESENTATION_ID.fullmatch(value) is None:
+        raise ValueError(f"{field} has an invalid format.")
 
 
 class SupportedPlatform(str, Enum):
@@ -314,6 +456,97 @@ class MemoryDiagnosticCode(str, Enum):
     LOCKED = "LOCKED"
     INTEGRITY_WARNING = "INTEGRITY_WARNING"
     INTEGRITY_FAILURE = "INTEGRITY_FAILURE"
+
+
+class EffectClass(str, Enum):
+    PURE = "PURE"
+    LOCAL_READ = "LOCAL_READ"
+    LOCAL_DERIVED_STATE_CHANGE = "LOCAL_DERIVED_STATE_CHANGE"
+    LOCAL_AUTHORITATIVE_STATE_CHANGE = "LOCAL_AUTHORITATIVE_STATE_CHANGE"
+    SYSTEM_OBSERVATION = "SYSTEM_OBSERVATION"
+    SYSTEM_STATE_CHANGE = "SYSTEM_STATE_CHANGE"
+    EXTERNAL_IO = "EXTERNAL_IO"
+    PROHIBITED = "PROHIBITED"
+
+
+class PermissionClass(str, Enum):
+    READ_ONLY = "READ_ONLY"
+    USER_APPROVAL_REQUIRED = "USER_APPROVAL_REQUIRED"
+    PROHIBITED = "PROHIBITED"
+
+
+class PrivacyClass(str, Enum):
+    PUBLIC_METADATA = "PUBLIC_METADATA"
+    LOCAL_SECURITY_DATA = "LOCAL_SECURITY_DATA"
+    SENSITIVE_LOCAL_DATA = "SENSITIVE_LOCAL_DATA"
+    SECRET = "SECRET"
+
+
+class CapabilityAvailability(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+    PROHIBITED = "PROHIBITED"
+
+
+class CapabilityParameterKind(str, Enum):
+    TEXT = "TEXT"
+    INTEGER = "INTEGER"
+    BOOLEAN = "BOOLEAN"
+    UTC_TIMESTAMP = "UTC_TIMESTAMP"
+
+
+class CapabilityTargetKind(str, Enum):
+    APPLICATION = "APPLICATION"
+    SYSTEM = "SYSTEM"
+    REPORT = "REPORT"
+    FINDING = "FINDING"
+
+
+class ReusePolicy(str, Enum):
+    ONE_TIME = "ONE_TIME"
+
+
+class EpistemicState(str, Enum):
+    OBSERVED = "OBSERVED"
+    STRONGLY_SUPPORTED = "STRONGLY_SUPPORTED"
+    POSSIBLE = "POSSIBLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class AssistantSectionId(str, Enum):
+    POSTURE = "posture"
+    CHANGES = "changes"
+    PRIORITIES = "priorities"
+    EXPLANATION = "explanation"
+    COVERAGE = "coverage"
+    NEXT_STEPS = "next_steps"
+
+
+class AssistantEvidenceSourceKind(str, Enum):
+    CANONICAL_REPORT = "CANONICAL_REPORT"
+    REPORT_FINDING = "REPORT_FINDING"
+    REPORT_COMPARISON = "REPORT_COMPARISON"
+    DETERMINISTIC_ADVISOR = "DETERMINISTIC_ADVISOR"
+
+
+class AssistantEvidenceRole(str, Enum):
+    OBSERVED_FACT = "OBSERVED_FACT"
+    DETERMINISTIC_DERIVATION = "DETERMINISTIC_DERIVATION"
+
+
+class AssistantIntent(str, Enum):
+    SUMMARY = "SUMMARY"
+    WHY_FINDING = "WHY_FINDING"
+    WHAT_CHANGED = "WHAT_CHANGED"
+    WHAT_TO_FIX_FIRST = "WHAT_TO_FIX_FIRST"
+    COVERAGE = "COVERAGE"
+
+
+class AssistantQuestionStatus(str, Enum):
+    ANSWERED = "ANSWERED"
+    UNSUPPORTED = "UNSUPPORTED"
+    AMBIGUOUS = "AMBIGUOUS"
+    MISSING_CONTEXT = "MISSING_CONTEXT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1480,3 +1713,557 @@ class MemoryHealthResult:
         )
         if len(self.diagnostics) > MEMORY_HEALTH_MAX_DIAGNOSTICS:
             raise ValueError("Memory health diagnostics exceed the supported bound.")
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityExpectedEffect:
+    effect_id: str
+    effect_class: EffectClass
+    summary: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect_id, str) or _EFFECT_ID.fullmatch(self.effect_id) is None:
+            raise ValueError("effect_id has an invalid format.")
+        _closed(self.effect_class, EffectClass, "effect_class")
+        _f_text(self.summary, "summary", 512)
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityParameterSpec:
+    key: str
+    kind: CapabilityParameterKind
+    required: bool
+    privacy_class: PrivacyClass
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or _PARAMETER_KEY.fullmatch(self.key) is None:
+            raise ValueError("parameter key has an invalid format.")
+        _closed(self.kind, CapabilityParameterKind, "kind")
+        _boolean(self.required, "required")
+        _closed(self.privacy_class, PrivacyClass, "privacy_class")
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityTarget:
+    kind: CapabilityTargetKind
+    system_id: str
+    report_ids: tuple[ReportId, ...]
+    finding_id: str | None
+
+    def __post_init__(self) -> None:
+        _closed(self.kind, CapabilityTargetKind, "kind")
+        _f_system_id(self.system_id)
+        _reject_unsafe_text(self.system_id, "system_id", reject_url=True)
+        _f_tuple(self.report_ids, ReportId, "report_ids", maximum=2)
+        if len(set(self.report_ids)) != len(self.report_ids):
+            raise ValueError("report_ids cannot contain duplicates.")
+        if self.finding_id is not None:
+            _f_text(self.finding_id, "finding_id", FINDING_ID_MAX)
+            if self.finding_id != self.finding_id.strip():
+                raise ValueError("finding_id cannot contain surrounding whitespace.")
+            _reject_unsafe_text(self.finding_id, "finding_id", reject_url=True)
+        if self.kind in (CapabilityTargetKind.APPLICATION, CapabilityTargetKind.SYSTEM):
+            if self.report_ids or self.finding_id is not None:
+                raise ValueError("application and system targets cannot bind reports or findings.")
+        elif self.kind == CapabilityTargetKind.REPORT:
+            if len(self.report_ids) not in (1, 2) or self.finding_id is not None:
+                raise ValueError("report targets require one or two reports and no finding.")
+        elif self.kind == CapabilityTargetKind.FINDING:
+            if self.finding_id is None or len(self.report_ids) > 1:
+                raise ValueError("finding targets require a finding and at most one report.")
+
+
+def _expected_effects(value: object) -> None:
+    _f_tuple(
+        value,
+        CapabilityExpectedEffect,
+        "expected_effects",
+        minimum=1,
+        maximum=16,
+    )
+    effect_ids = tuple(item.effect_id for item in value)
+    if effect_ids != tuple(sorted(effect_ids)):
+        raise ValueError("expected_effects must be ordered by effect_id.")
+    if len(set(effect_ids)) != len(effect_ids):
+        raise ValueError("expected_effects cannot duplicate effect_id.")
+    semantics = tuple((item.effect_class, item.summary) for item in value)
+    if len(set(semantics)) != len(semantics):
+        raise ValueError("expected_effects cannot duplicate effect semantics.")
+
+
+def _parameter_specs(value: object) -> None:
+    _f_tuple(
+        value,
+        CapabilityParameterSpec,
+        "parameters",
+        maximum=32,
+    )
+    keys = tuple(item.key for item in value)
+    if keys != tuple(sorted(keys)):
+        raise ValueError("parameter specs must be ordered by key.")
+    if len(set(keys)) != len(keys):
+        raise ValueError("parameter specs cannot duplicate keys.")
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityMetadata:
+    capability_id: str
+    capability_version: str
+    title: str
+    summary: str
+    effect_class: EffectClass
+    permission_class: PermissionClass
+    privacy_class: PrivacyClass
+    availability: CapabilityAvailability
+    expected_effects: tuple[CapabilityExpectedEffect, ...]
+    target_kinds: tuple[CapabilityTargetKind, ...]
+    parameters: tuple[CapabilityParameterSpec, ...]
+
+    def __post_init__(self) -> None:
+        _capability_id(self.capability_id)
+        _capability_version(self.capability_version)
+        _f_text(self.title, "title", 128)
+        _f_text(self.summary, "summary", 1024)
+        _closed(self.effect_class, EffectClass, "effect_class")
+        _closed(self.permission_class, PermissionClass, "permission_class")
+        _closed(self.privacy_class, PrivacyClass, "privacy_class")
+        _closed(self.availability, CapabilityAvailability, "availability")
+        _expected_effects(self.expected_effects)
+        _f_tuple(
+            self.target_kinds,
+            CapabilityTargetKind,
+            "target_kinds",
+            minimum=1,
+            maximum=4,
+        )
+        if len(set(self.target_kinds)) != len(self.target_kinds):
+            raise ValueError("target_kinds cannot contain duplicates.")
+        target_order = {kind: index for index, kind in enumerate(CapabilityTargetKind)}
+        if tuple(sorted(self.target_kinds, key=target_order.__getitem__)) != self.target_kinds:
+            raise ValueError("target_kinds must follow enum declaration order.")
+        _parameter_specs(self.parameters)
+        if self.availability == CapabilityAvailability.AVAILABLE and any(
+            parameter.privacy_class == PrivacyClass.SECRET
+            for parameter in self.parameters
+        ):
+            raise ValueError("available capabilities cannot accept secret parameters.")
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalParameter:
+    key: str
+    kind: CapabilityParameterKind
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or _PARAMETER_KEY.fullmatch(self.key) is None:
+            raise ValueError("parameter key has an invalid format.")
+        _reject_unsafe_text(self.key, "key")
+        _closed(self.kind, CapabilityParameterKind, "kind")
+        _f_text(self.value, "value", 1024)
+        _reject_unsafe_text(self.value, "value")
+        if self.kind == CapabilityParameterKind.TEXT:
+            if self.value != self.value.strip():
+                raise ValueError("text parameter values cannot have surrounding whitespace.")
+        elif self.kind == CapabilityParameterKind.INTEGER:
+            if _INTEGER_PARAMETER.fullmatch(self.value) is None:
+                raise ValueError("integer parameter value is not canonical.")
+            parsed = int(self.value)
+            if not -(2**63) <= parsed <= 2**63 - 1:
+                raise ValueError("integer parameter value is outside signed 64-bit range.")
+        elif self.kind == CapabilityParameterKind.BOOLEAN:
+            if self.value not in ("true", "false"):
+                raise ValueError("boolean parameter value is not canonical.")
+        elif self.kind == CapabilityParameterKind.UTC_TIMESTAMP:
+            if _UTC_TIMESTAMP_PARAMETER.fullmatch(self.value) is None:
+                raise ValueError("timestamp parameter value is not canonical.")
+            try:
+                datetime.strptime(self.value, "%Y-%m-%dT%H:%M:%S.%fZ")
+            except ValueError:
+                raise ValueError("timestamp parameter value is invalid.") from None
+
+
+def _proposal_parameters(value: object) -> None:
+    _f_tuple(value, ProposalParameter, "parameters", maximum=32)
+    keys = tuple(item.key for item in value)
+    if keys != tuple(sorted(keys)):
+        raise ValueError("proposal parameters must be ordered by key.")
+    if len(set(keys)) != len(keys):
+        raise ValueError("proposal parameters cannot duplicate keys.")
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantEvidenceReference:
+    evidence_id: str
+    source_kind: AssistantEvidenceSourceKind
+    source_id: str
+    evidence_role: AssistantEvidenceRole
+    report_ids: tuple[ReportId, ...]
+
+    def __post_init__(self) -> None:
+        _presentation_id(self.evidence_id, "evidence_id")
+        _closed(self.source_kind, AssistantEvidenceSourceKind, "source_kind")
+        _f_text(self.source_id, "source_id", 512)
+        _reject_unsafe_text(self.source_id, "source_id")
+        _closed(self.evidence_role, AssistantEvidenceRole, "evidence_role")
+        _f_tuple(self.report_ids, ReportId, "report_ids", minimum=1, maximum=2)
+        if len(set(self.report_ids)) != len(self.report_ids):
+            raise ValueError("evidence report_ids cannot contain duplicates.")
+        observed_sources = {
+            AssistantEvidenceSourceKind.CANONICAL_REPORT,
+            AssistantEvidenceSourceKind.REPORT_FINDING,
+        }
+        expected_role = (
+            AssistantEvidenceRole.OBSERVED_FACT
+            if self.source_kind in observed_sources
+            else AssistantEvidenceRole.DETERMINISTIC_DERIVATION
+        )
+        if self.evidence_role != expected_role:
+            raise ValueError("evidence source and role are incompatible.")
+        if self.source_kind == AssistantEvidenceSourceKind.CANONICAL_REPORT:
+            if len(self.report_ids) != 1 or self.source_id != self.report_ids[0].value:
+                raise ValueError("canonical-report evidence binding is invalid.")
+        elif self.source_kind == AssistantEvidenceSourceKind.REPORT_FINDING:
+            if len(self.report_ids) != 1:
+                raise ValueError("finding evidence must bind exactly one report.")
+        elif self.source_kind == AssistantEvidenceSourceKind.REPORT_COMPARISON:
+            if len(self.report_ids) != 2:
+                raise ValueError("comparison evidence must bind exactly two reports.")
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantClaim:
+    claim_id: str
+    text: str
+    epistemic_state: EpistemicState
+    evidence_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _presentation_id(self.claim_id, "claim_id")
+        _f_text(self.text, "text", 2048)
+        _reject_unsafe_text(self.text, "text")
+        _closed(self.epistemic_state, EpistemicState, "epistemic_state")
+        if not isinstance(self.evidence_refs, tuple) or not all(
+            isinstance(item, str) for item in self.evidence_refs
+        ):
+            raise TypeError("evidence_refs must be an immutable text tuple.")
+        if not 1 <= len(self.evidence_refs) <= 16:
+            raise ValueError("evidence_refs is outside the supported bound.")
+        for evidence_id in self.evidence_refs:
+            _presentation_id(evidence_id, "evidence_ref")
+        if len(set(self.evidence_refs)) != len(self.evidence_refs):
+            raise ValueError("evidence_refs cannot contain duplicates.")
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantSection:
+    section_id: AssistantSectionId
+    title: str
+    claims: tuple[AssistantClaim, ...]
+    omitted_item_count: int
+
+    def __post_init__(self) -> None:
+        _closed(self.section_id, AssistantSectionId, "section_id")
+        _f_text(self.title, "title", 128)
+        _reject_unsafe_text(self.title, "title")
+        _f_tuple(self.claims, AssistantClaim, "claims", maximum=64)
+        if not self.claims and self.section_id != AssistantSectionId.PRIORITIES:
+            raise ValueError("only the priorities section may be empty.")
+        if (
+            isinstance(self.omitted_item_count, bool)
+            or not isinstance(self.omitted_item_count, int)
+            or not 0 <= self.omitted_item_count <= 65536
+        ):
+            raise ValueError("omitted_item_count is outside the supported bound.")
+
+
+def _evidence_order(item: AssistantEvidenceReference) -> tuple[object, ...]:
+    return (
+        item.source_kind.value,
+        item.source_id,
+        item.evidence_role.value,
+        tuple(report_id.value for report_id in item.report_ids),
+        item.evidence_id,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantGroundedResponse:
+    sections: tuple[AssistantSection, ...]
+    evidence: tuple[AssistantEvidenceReference, ...]
+
+    def __post_init__(self) -> None:
+        _f_tuple(self.sections, AssistantSection, "sections", minimum=1, maximum=16)
+        section_ids = tuple(section.section_id for section in self.sections)
+        if len(set(section_ids)) != len(section_ids):
+            raise ValueError("response sections cannot duplicate identifiers.")
+        precedence = {section: index for index, section in enumerate(AssistantSectionId)}
+        if tuple(sorted(section_ids, key=precedence.__getitem__)) != section_ids:
+            raise ValueError("response sections must follow canonical precedence.")
+        claims = tuple(claim for section in self.sections for claim in section.claims)
+        if len(claims) > 64:
+            raise ValueError("response contains too many claims.")
+        if sum(len(claim.text) for claim in claims) > 65536:
+            raise ValueError("response claim text exceeds the aggregate bound.")
+        claim_ids = tuple(claim.claim_id for claim in claims)
+        if len(set(claim_ids)) != len(claim_ids):
+            raise ValueError("response claims cannot duplicate identifiers.")
+        _f_tuple(
+            self.evidence,
+            AssistantEvidenceReference,
+            "evidence",
+            minimum=1,
+            maximum=128,
+        )
+        evidence_ids = tuple(item.evidence_id for item in self.evidence)
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise ValueError("response evidence cannot duplicate identifiers.")
+        semantic_keys = tuple(
+            (item.source_kind, item.source_id, item.evidence_role, item.report_ids)
+            for item in self.evidence
+        )
+        if len(set(semantic_keys)) != len(semantic_keys):
+            raise ValueError("response evidence cannot duplicate semantic identity.")
+        if tuple(sorted(self.evidence, key=_evidence_order)) != self.evidence:
+            raise ValueError("response evidence must use canonical ordering.")
+        evidence_by_id = {item.evidence_id: item for item in self.evidence}
+        evidence_position = {
+            item.evidence_id: index for index, item in enumerate(self.evidence)
+        }
+        referenced: set[str] = set()
+        for claim in claims:
+            if any(item not in evidence_by_id for item in claim.evidence_refs):
+                raise ValueError("claim references missing evidence.")
+            positions = tuple(evidence_position[item] for item in claim.evidence_refs)
+            if positions != tuple(sorted(positions)):
+                raise ValueError("claim evidence references must follow response order.")
+            referenced.update(claim.evidence_refs)
+            roles = tuple(evidence_by_id[item].evidence_role for item in claim.evidence_refs)
+            if claim.epistemic_state == EpistemicState.OBSERVED and any(
+                role != AssistantEvidenceRole.OBSERVED_FACT for role in roles
+            ):
+                raise ValueError("observed claims require observed-fact evidence only.")
+            if claim.epistemic_state == EpistemicState.STRONGLY_SUPPORTED and (
+                AssistantEvidenceRole.OBSERVED_FACT not in roles
+            ):
+                raise ValueError("strongly supported claims require observed evidence.")
+        if referenced != set(evidence_ids):
+            raise ValueError("every evidence item must support at least one claim.")
+
+
+def _report_selection(
+    system_id: object,
+    current_report_id: object,
+    previous_report_id: object,
+) -> None:
+    _f_system_id(system_id)
+    _report_identity(current_report_id, "current_report_id")
+    if previous_report_id is not None:
+        _report_identity(previous_report_id, "previous_report_id")
+        if previous_report_id == current_report_id:
+            raise ValueError("previous and current report IDs must differ.")
+
+
+@dataclass(frozen=True, slots=True)
+class SecurityBriefingRequest:
+    system_id: str
+    current_report_id: ReportId
+    previous_report_id: ReportId | None
+
+    def __post_init__(self) -> None:
+        _report_selection(
+            self.system_id,
+            self.current_report_id,
+            self.previous_report_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantQuestionRequest:
+    system_id: str
+    current_report_id: ReportId
+    previous_report_id: ReportId | None
+    question: str
+
+    def __post_init__(self) -> None:
+        _report_selection(
+            self.system_id,
+            self.current_report_id,
+            self.previous_report_id,
+        )
+        _f_text(self.question, "question", 4096)
+
+
+def _result_report_context(
+    system_id: object,
+    current_report: object,
+    previous_report: object,
+) -> None:
+    _f_system_id(system_id)
+    if not isinstance(current_report, SavedReportReference):
+        raise TypeError("current_report must use the immutable report reference.")
+    _utc_datetime(current_report.generated_at, "current_report.generated_at")
+    if previous_report is not None:
+        if not isinstance(previous_report, SavedReportReference):
+            raise TypeError("previous_report must use the immutable report reference.")
+        _utc_datetime(previous_report.generated_at, "previous_report.generated_at")
+        previous_key = (previous_report.generated_at, previous_report.report_id.value)
+        current_key = (current_report.generated_at, current_report.report_id.value)
+        if previous_key >= current_key:
+            raise ValueError("report result chronology is invalid.")
+
+
+@dataclass(frozen=True, slots=True)
+class SecurityBriefingResult:
+    operation_id: str
+    system_id: str
+    current_report: SavedReportReference
+    previous_report: SavedReportReference | None
+    response: AssistantGroundedResponse
+
+    def __post_init__(self) -> None:
+        _assistant_operation(self.operation_id)
+        _result_report_context(self.system_id, self.current_report, self.previous_report)
+        if not isinstance(self.response, AssistantGroundedResponse):
+            raise TypeError("response must use the immutable grounded response.")
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantQuestionResult:
+    operation_id: str
+    system_id: str
+    current_report: SavedReportReference
+    previous_report: SavedReportReference | None
+    status: AssistantQuestionStatus
+    intent: AssistantIntent | None
+    response: AssistantGroundedResponse | None
+
+    def __post_init__(self) -> None:
+        _assistant_operation(self.operation_id)
+        _result_report_context(self.system_id, self.current_report, self.previous_report)
+        _closed(self.status, AssistantQuestionStatus, "status")
+        if self.intent is not None:
+            _closed(self.intent, AssistantIntent, "intent")
+        if self.response is not None and not isinstance(
+            self.response, AssistantGroundedResponse
+        ):
+            raise TypeError("response must use the immutable grounded response.")
+        if self.status == AssistantQuestionStatus.ANSWERED:
+            if self.intent is None or self.response is None:
+                raise ValueError("answered results require intent and response.")
+        elif self.status == AssistantQuestionStatus.MISSING_CONTEXT:
+            if self.intent != AssistantIntent.WHAT_CHANGED or self.response is not None:
+                raise ValueError("missing-context results require only WHAT_CHANGED intent.")
+        elif self.intent is not None or self.response is not None:
+            raise ValueError("unsupported and ambiguous results carry no intent or response.")
+
+
+@dataclass(frozen=True, slots=True)
+class ListCapabilitiesRequest:
+    """Request the static application capability metadata."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityCatalogResult:
+    operation_id: str
+    capabilities: tuple[CapabilityMetadata, ...]
+    returned_count: int
+
+    def __post_init__(self) -> None:
+        _assistant_operation(self.operation_id)
+        _f_tuple(self.capabilities, CapabilityMetadata, "capabilities", maximum=64)
+        if (
+            isinstance(self.returned_count, bool)
+            or not isinstance(self.returned_count, int)
+            or not 0 <= self.returned_count <= 64
+            or self.returned_count != len(self.capabilities)
+        ):
+            raise ValueError("returned_count must equal the bounded catalog length.")
+        identities = tuple(
+            (item.capability_id, item.capability_version)
+            for item in self.capabilities
+        )
+        if len(set(identities)) != len(identities):
+            raise ValueError("capability catalog cannot contain duplicate identities.")
+        expected = tuple(
+            sorted(
+                self.capabilities,
+                key=lambda item: (item.capability_id, int(item.capability_version)),
+            )
+        )
+        if expected != self.capabilities:
+            raise ValueError("capability catalog must use canonical ordering.")
+
+
+@dataclass(frozen=True, slots=True)
+class ProposeCapabilityRequest:
+    system_id: str
+    capability_id: str
+    capability_version: str
+    target: CapabilityTarget
+    parameters: tuple[ProposalParameter, ...]
+
+    def __post_init__(self) -> None:
+        _f_system_id(self.system_id)
+        _capability_id(self.capability_id)
+        _capability_version(self.capability_version)
+        if not isinstance(self.target, CapabilityTarget):
+            raise TypeError("target must use the immutable capability target.")
+        if self.system_id != self.target.system_id:
+            raise ValueError("request and target system_id must match exactly.")
+        _proposal_parameters(self.parameters)
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityProposal:
+    proposal_id: str
+    system_id: str
+    capability_id: str
+    capability_version: str
+    target: CapabilityTarget
+    target_digest: str
+    parameters: tuple[ProposalParameter, ...]
+    parameter_digest: str
+    effect_class: EffectClass
+    permission_class: PermissionClass
+    privacy_class: PrivacyClass
+    expected_effects: tuple[CapabilityExpectedEffect, ...]
+    issued_at: datetime
+    expires_at: datetime
+    reuse_policy: ReusePolicy
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.proposal_id, str) or _PROPOSAL_ID.fullmatch(self.proposal_id) is None:
+            raise ValueError("proposal_id has an invalid format.")
+        _f_system_id(self.system_id)
+        _capability_id(self.capability_id)
+        _capability_version(self.capability_version)
+        if not isinstance(self.target, CapabilityTarget):
+            raise TypeError("target must use the immutable capability target.")
+        if self.system_id != self.target.system_id:
+            raise ValueError("proposal and target system_id must match exactly.")
+        _digest(self.target_digest, "target_digest")
+        _proposal_parameters(self.parameters)
+        _digest(self.parameter_digest, "parameter_digest")
+        _closed(self.effect_class, EffectClass, "effect_class")
+        _closed(self.permission_class, PermissionClass, "permission_class")
+        _closed(self.privacy_class, PrivacyClass, "privacy_class")
+        _expected_effects(self.expected_effects)
+        _utc_datetime(self.issued_at, "issued_at")
+        _utc_datetime(self.expires_at, "expires_at")
+        if self.expires_at != self.issued_at + timedelta(minutes=10):
+            raise ValueError("proposal expiry must be exactly ten minutes.")
+        _closed(self.reuse_policy, ReusePolicy, "reuse_policy")
+        if self.reuse_policy != ReusePolicy.ONE_TIME:
+            raise ValueError("proposal reuse policy must be ONE_TIME.")
+
+
+@dataclass(frozen=True, slots=True)
+class ProposeCapabilityResult:
+    operation_id: str
+    proposal: CapabilityProposal
+
+    def __post_init__(self) -> None:
+        _assistant_operation(self.operation_id)
+        if not isinstance(self.proposal, CapabilityProposal):
+            raise TypeError("proposal must use the immutable proposal contract.")
