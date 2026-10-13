@@ -161,6 +161,10 @@ def _is_application_operation_id(value: object) -> bool:
         _is_assessment_operation_id(value)
         or _is_report_operation_id(value)
         or _is_history_operation_id(value)
+        or (
+            isinstance(value, str)
+            and _ASSISTANT_OPERATION_ID.fullmatch(value) is not None
+        )
     )
 
 

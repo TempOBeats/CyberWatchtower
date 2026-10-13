@@ -9,6 +9,7 @@ from cyberwatchtower.application import (
     ApplicationErrorCode,
     ApplicationFailure,
     ApplicationFinding,
+    CapabilityCatalogResult,
     CurrentSystemAssessmentRequest,
     CyberWatchtowerApplication,
     CyberWatchtowerApplicationError,
@@ -116,6 +117,118 @@ class ApplicationContractTests(unittest.TestCase):
                 component=ApplicationComponent.APPLICATION,
                 operation_id="assessment:" + "a" * 32,
             )
+
+    def test_application_failure_accepts_assistant_operation_ids(self):
+        operation_ids = (
+            "assistantop:" + "a" * 32,
+            "assistantop:0123456789abcdef0123456789abcdef",
+        )
+
+        for operation_id in operation_ids:
+            with self.subTest(operation_id=operation_id):
+                failure = ApplicationFailure(
+                    code=ApplicationErrorCode.INVALID_REQUEST,
+                    message="The request is invalid.",
+                    retryable=False,
+                    component=ApplicationComponent.APPLICATION,
+                    operation_id=operation_id,
+                )
+                self.assertEqual(failure.operation_id, operation_id)
+
+        result = CapabilityCatalogResult(
+            operation_id=operation_ids[1],
+            capabilities=(),
+            returned_count=0,
+        )
+        self.assertEqual(result.operation_id, operation_ids[1])
+
+    def test_application_failure_rejects_malformed_assistant_operation_ids(self):
+        malformed = (
+            "assistantop:",
+            "assistantop:" + "a" * 31,
+            "assistantop:" + "a" * 33,
+            "assistantop:" + "A" * 32,
+            "assistantop:" + "g" * 32,
+            "assistant:" + "a" * 32,
+            "assistantop:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            " assistantop:" + "a" * 32,
+            "assistantop:" + "a" * 32 + " ",
+            "assistantop:" + "a" * 15 + " " + "a" * 16,
+        )
+
+        for operation_id in malformed:
+            with self.subTest(operation_id=operation_id):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "application failure operation id is invalid",
+                ):
+                    ApplicationFailure(
+                        code=ApplicationErrorCode.INVALID_REQUEST,
+                        message="The request is invalid.",
+                        retryable=False,
+                        component=ApplicationComponent.APPLICATION,
+                        operation_id=operation_id,
+                    )
+
+    def test_existing_application_operation_id_families_remain_exact(self):
+        valid = (
+            "assessment:" + "a" * 32,
+            "reportop:0123456789abcdef0123456789abcdef",
+            "historyop:" + "0" * 32,
+        )
+        invalid = (
+            "assessmentx:" + "a" * 32,
+            "assessment:assistantop:" + "a" * 32,
+            "reportop:" + "a" * 31,
+            "historyop:" + "G" * 32,
+            "prefixassessment:" + "a" * 32,
+        )
+
+        for operation_id in valid:
+            with self.subTest(operation_id=operation_id):
+                failure = ApplicationFailure(
+                    code=ApplicationErrorCode.INVALID_REQUEST,
+                    message="The request is invalid.",
+                    retryable=False,
+                    component=ApplicationComponent.APPLICATION,
+                    operation_id=operation_id,
+                )
+                self.assertEqual(failure.operation_id, operation_id)
+
+        for operation_id in invalid:
+            with self.subTest(operation_id=operation_id):
+                with self.assertRaises(ValueError):
+                    ApplicationFailure(
+                        code=ApplicationErrorCode.INVALID_REQUEST,
+                        message="The request is invalid.",
+                        retryable=False,
+                        component=ApplicationComponent.APPLICATION,
+                        operation_id=operation_id,
+                    )
+
+    def test_assistant_operation_id_remains_correlation_only(self):
+        failure = ApplicationFailure(
+            code=ApplicationErrorCode.INVALID_REQUEST,
+            message="The request is invalid.",
+            retryable=False,
+            component=ApplicationComponent.APPLICATION,
+            operation_id="assistantop:" + "a" * 32,
+        )
+
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(failure)),
+            ("code", "message", "retryable", "component", "operation_id", "domain"),
+        )
+        for authority_field in (
+            "authorization",
+            "approval",
+            "capability",
+            "proposal",
+            "execution",
+        ):
+            with self.subTest(authority_field=authority_field):
+                self.assertFalse(hasattr(failure, authority_field))
+        self.assertFalse(hasattr(CyberWatchtowerApplication, "propose_capability"))
 
     def test_finding_contract_has_no_coverage_or_mutable_container_fields(self):
         names = {field.name for field in dataclasses.fields(ApplicationFinding)}
