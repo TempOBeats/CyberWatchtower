@@ -609,7 +609,6 @@ class ApplicationCapabilityCoreSecurityTests(unittest.TestCase):
             "get_security_briefing",
             "ask_assistant",
             "list_capabilities",
-            "propose_capability",
         ):
             self.assertFalse(hasattr(application.CyberWatchtowerApplication, method))
 

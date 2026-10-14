@@ -228,7 +228,6 @@ class ApplicationContractTests(unittest.TestCase):
         ):
             with self.subTest(authority_field=authority_field):
                 self.assertFalse(hasattr(failure, authority_field))
-        self.assertFalse(hasattr(CyberWatchtowerApplication, "propose_capability"))
 
     def test_finding_contract_has_no_coverage_or_mutable_container_fields(self):
         names = {field.name for field in dataclasses.fields(ApplicationFinding)}

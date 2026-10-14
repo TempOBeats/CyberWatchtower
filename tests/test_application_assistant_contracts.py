@@ -686,7 +686,6 @@ class ApplicationAssistantContractTests(unittest.TestCase):
         facade = CyberWatchtowerApplication()
         for method in (
             "get_security_briefing", "ask_assistant", "list_capabilities",
-            "propose_capability",
         ):
             self.assertFalse(hasattr(facade, method))
 

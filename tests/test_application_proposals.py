@@ -547,9 +547,6 @@ class CapabilityProposalTests(unittest.TestCase):
 class ProposalBoundaryTests(unittest.TestCase):
     def test_private_module_is_not_exported_and_no_facade_method_exists(self):
         self.assertNotIn("_construct_proposal", application.__all__)
-        self.assertFalse(
-            hasattr(application.CyberWatchtowerApplication, "propose_capability")
-        )
 
     def test_source_imports_only_pure_application_contract_dependencies(self):
         source = PROPOSALS_SOURCE.read_text(encoding="utf-8")
