@@ -42,6 +42,8 @@ from .contracts import (
     MemoryHealthResult,
     ProjectionNotice,
     ProjectionNoticeCode,
+    ProposeCapabilityRequest,
+    ProposeCapabilityResult,
     ReportCatalogCompleteness,
     ReportId,
     RecurringFindingsResult,
@@ -67,6 +69,7 @@ from .errors import (
 from ._privacy import _project_evidence, _required_text_is_sensitive
 from . import _history
 from . import _memory
+from . import _proposals
 from . import reports as _reports
 
 
@@ -116,6 +119,14 @@ def _report_operation_id() -> str:
     return f"reportop:{uuid4().hex}"
 
 
+def _assistant_operation_id() -> str:
+    return f"assistantop:{uuid4().hex}"
+
+
+def _proposal_utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _application_error(
     operation_id: str,
     code: ApplicationErrorCode,
@@ -143,6 +154,59 @@ def _application_error(
         message=messages[code],
         retryable=False,
         component=component,
+        operation_id=operation_id,
+    ))
+
+
+def _proposal_public_error_code(
+    code: _proposals._ProposalFailureCode,
+) -> ApplicationErrorCode:
+    if code in (
+        _proposals._ProposalFailureCode.UNKNOWN_CAPABILITY,
+        _proposals._ProposalFailureCode.STALE_CAPABILITY_VERSION,
+        _proposals._ProposalFailureCode.PROHIBITED_CAPABILITY,
+    ):
+        return ApplicationErrorCode.AUTHORIZATION_DENIED
+    if code == _proposals._ProposalFailureCode.UNAVAILABLE_CAPABILITY:
+        return ApplicationErrorCode.COMPONENT_UNAVAILABLE
+    if code in (
+        _proposals._ProposalFailureCode.INCOMPATIBLE_TARGET,
+        _proposals._ProposalFailureCode.UNKNOWN_PARAMETER,
+        _proposals._ProposalFailureCode.DUPLICATE_PARAMETER,
+        _proposals._ProposalFailureCode.MISSING_REQUIRED_PARAMETER,
+        _proposals._ProposalFailureCode.WRONG_PARAMETER_KIND,
+        _proposals._ProposalFailureCode.INVALID_PARAMETER_VALUE,
+    ):
+        return ApplicationErrorCode.INVALID_REQUEST
+    return ApplicationErrorCode.INTERNAL_FAILURE
+
+
+def _proposal_application_error(
+    operation_id: str,
+    code: ApplicationErrorCode,
+) -> CyberWatchtowerApplicationError:
+    messages = {
+        ApplicationErrorCode.INVALID_REQUEST: (
+            "The capability proposal request is invalid."
+        ),
+        ApplicationErrorCode.AUTHORIZATION_DENIED: (
+            "The requested capability cannot be proposed."
+        ),
+        ApplicationErrorCode.COMPONENT_UNAVAILABLE: (
+            "The requested capability is unavailable."
+        ),
+        ApplicationErrorCode.COMPATIBILITY_FAILURE: (
+            "The capability proposal did not match the supported contracts."
+        ),
+        ApplicationErrorCode.INTERNAL_FAILURE: (
+            "The capability proposal could not be completed."
+        ),
+    }
+    return CyberWatchtowerApplicationError(ApplicationFailure(
+        code=code,
+        message=messages[code],
+        retryable=False,
+        component=ApplicationComponent.APPLICATION,
         operation_id=operation_id,
     ))
 
@@ -1219,5 +1283,51 @@ class CyberWatchtowerApplication:
                 operation_id,
                 ApplicationErrorCode.INTERNAL_FAILURE,
                 ApplicationComponent.STORAGE,
+            )
+        raise public_error
+
+    def propose_capability(
+        self,
+        request: ProposeCapabilityRequest,
+    ) -> ProposeCapabilityResult:
+        operation_id = _assistant_operation_id()
+        if type(request) is not ProposeCapabilityRequest:
+            raise _proposal_application_error(
+                operation_id,
+                ApplicationErrorCode.INVALID_REQUEST,
+            )
+
+        try:
+            issued_at = _proposal_utc_now()
+        except Exception:
+            public_error = _proposal_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
+            )
+        else:
+            public_error = None
+        if public_error is not None:
+            raise public_error
+
+        try:
+            proposal = _proposals._construct_proposal(request, issued_at)
+            return ProposeCapabilityResult(
+                operation_id=operation_id,
+                proposal=proposal,
+            )
+        except _proposals._ProposalConstructionError as failure:
+            public_error = _proposal_application_error(
+                operation_id,
+                _proposal_public_error_code(failure.code),
+            )
+        except (TypeError, ValueError):
+            public_error = _proposal_application_error(
+                operation_id,
+                ApplicationErrorCode.COMPATIBILITY_FAILURE,
+            )
+        except Exception:
+            public_error = _proposal_application_error(
+                operation_id,
+                ApplicationErrorCode.INTERNAL_FAILURE,
             )
         raise public_error
